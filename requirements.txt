@@ -1,0 +1,13 @@
+langchain
+langchain-google-genai
+langgraph
+streamlit
+faiss-cpu
+sentence-transformers
+requests
+pillow
+python-dotenv
+langchain-community
+tqdm
+tiktoken
+openai

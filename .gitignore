@@ -1,0 +1,24 @@
+# Entornos virtuales
+.venv/
+venv/
+ENV/
+env/
+
+# Variables de entorno y secretos
+.env
+
+# Cache de Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Almacenamiento local generado (vectorstore y mapas renderizados)
+storage/vector_db/
+storage/maps/
+
+# IDE y editores
+.vscode/
+.idea/
+*.swp
+*.swo

@@ -1,0 +1,477 @@
+# ARMOR - D&D 5e SRD
+
+## Breastplate
+
+**Desc:** A breastplate.
+**Armor:** {
+  "name": "Breastplate",
+  "key": "srd-2024_breastplate",
+  "category": "medium",
+  "ac_base": 14,
+  "ac_display": "14 + Dex modifier (max 2)",
+  "ac_add_dexmod": true,
+  "ac_cap_dexmod": 2,
+  "grants_stealth_disadvantage": false,
+  "strength_score_required": null
+}
+**Cost:** 400.00
+**Weight:** 20.000
+
+---
+
+## Chain Mail
+
+**Desc:** A chain mail.
+**Armor:** {
+  "name": "Chain Mail",
+  "key": "srd-2024_chain-mail",
+  "category": "heavy",
+  "ac_base": 16,
+  "ac_display": "16",
+  "ac_add_dexmod": false,
+  "ac_cap_dexmod": null,
+  "grants_stealth_disadvantage": true,
+  "strength_score_required": 13
+}
+**Cost:** 75.00
+**Weight:** 55.000
+
+---
+
+## Chain Shirt
+
+**Desc:** A chain shirt.
+**Armor:** {
+  "name": "Chain Shirt",
+  "key": "srd-2024_chain-shirt",
+  "category": "medium",
+  "ac_base": 13,
+  "ac_display": "13 + Dex modifier (max 2)",
+  "ac_add_dexmod": true,
+  "ac_cap_dexmod": 2,
+  "grants_stealth_disadvantage": false,
+  "strength_score_required": null
+}
+**Cost:** 50.00
+**Weight:** 20.000
+
+---
+
+## Half Plate Armor
+
+**Desc:** A half plate armor.
+**Armor:** {
+  "name": "Half Plate Armor",
+  "key": "srd-2024_half-plate-armor",
+  "category": "medium",
+  "ac_base": 15,
+  "ac_display": "15 + Dex modifier (max 2)",
+  "ac_add_dexmod": true,
+  "ac_cap_dexmod": 2,
+  "grants_stealth_disadvantage": true,
+  "strength_score_required": null
+}
+**Cost:** 750.00
+**Weight:** 40.000
+
+---
+
+## Hide Armor
+
+**Desc:** A hide armor.
+**Armor:** {
+  "name": "Hide Armor",
+  "key": "srd-2024_hide-armor",
+  "category": "medium",
+  "ac_base": 12,
+  "ac_display": "12 + Dex modifier (max 2)",
+  "ac_add_dexmod": true,
+  "ac_cap_dexmod": 2,
+  "grants_stealth_disadvantage": false,
+  "strength_score_required": null
+}
+**Cost:** 10.00
+**Weight:** 12.000
+
+---
+
+## Leather Armor
+
+**Desc:** A leather armor.
+**Armor:** {
+  "name": "Leather Armor",
+  "key": "srd-2024_leather-armor",
+  "category": "light",
+  "ac_base": 11,
+  "ac_display": "11 + Dex modifier",
+  "ac_add_dexmod": true,
+  "ac_cap_dexmod": null,
+  "grants_stealth_disadvantage": false,
+  "strength_score_required": null
+}
+**Cost:** 10.00
+**Weight:** 10.000
+
+---
+
+## Padded Armor
+
+**Desc:** A padded armor.
+**Armor:** {
+  "name": "Padded Armor",
+  "key": "srd-2024_padded-armor",
+  "category": "light",
+  "ac_base": 11,
+  "ac_display": "11 + Dex modifier",
+  "ac_add_dexmod": true,
+  "ac_cap_dexmod": null,
+  "grants_stealth_disadvantage": true,
+  "strength_score_required": null
+}
+**Cost:** 5.00
+**Weight:** 8.000
+
+---
+
+## Plate Armor
+
+**Desc:** A plate armor.
+**Armor:** {
+  "name": "Plate Armor",
+  "key": "srd-2024_plate-armor",
+  "category": "heavy",
+  "ac_base": 18,
+  "ac_display": "18",
+  "ac_add_dexmod": false,
+  "ac_cap_dexmod": null,
+  "grants_stealth_disadvantage": true,
+  "strength_score_required": 15
+}
+**Cost:** 1500.00
+**Weight:** 65.000
+
+---
+
+## Ring Mail
+
+**Desc:** A ring mail.
+**Armor:** {
+  "name": "Ring Mail",
+  "key": "srd-2024_ring-mail",
+  "category": "heavy",
+  "ac_base": 14,
+  "ac_display": "14",
+  "ac_add_dexmod": false,
+  "ac_cap_dexmod": null,
+  "grants_stealth_disadvantage": true,
+  "strength_score_required": null
+}
+**Cost:** 30.00
+**Weight:** 40.000
+
+---
+
+## Scale Mail
+
+**Desc:** A scale mail.
+**Armor:** {
+  "name": "Scale Mail",
+  "key": "srd-2024_scale-mail",
+  "category": "medium",
+  "ac_base": 14,
+  "ac_display": "14 + Dex modifier (max 2)",
+  "ac_add_dexmod": true,
+  "ac_cap_dexmod": 2,
+  "grants_stealth_disadvantage": true,
+  "strength_score_required": null
+}
+**Cost:** 50.00
+**Weight:** 45.000
+
+---
+
+## Shield
+
+**Desc:** A shield.
+**Armor:** {
+  "name": "Shield",
+  "key": "srd-2024_shield",
+  "category": "heavy",
+  "ac_base": 2,
+  "ac_display": "2",
+  "ac_add_dexmod": false,
+  "ac_cap_dexmod": null,
+  "grants_stealth_disadvantage": false,
+  "strength_score_required": null
+}
+**Cost:** 10.00
+**Weight:** 6.000
+
+---
+
+## Splint Armor
+
+**Desc:** A splint armor.
+**Armor:** {
+  "name": "Splint Armor",
+  "key": "srd-2024_splint-armor",
+  "category": "heavy",
+  "ac_base": 17,
+  "ac_display": "17",
+  "ac_add_dexmod": false,
+  "ac_cap_dexmod": null,
+  "grants_stealth_disadvantage": true,
+  "strength_score_required": 15
+}
+**Cost:** 200.00
+**Weight:** 60.000
+
+---
+
+## Studded Leather Armor
+
+**Desc:** A studded leather armor.
+**Armor:** {
+  "name": "Studded Leather Armor",
+  "key": "srd-2024_studded-leather-armor",
+  "category": "light",
+  "ac_base": 12,
+  "ac_display": "12 + Dex modifier",
+  "ac_add_dexmod": true,
+  "ac_cap_dexmod": null,
+  "grants_stealth_disadvantage": false,
+  "strength_score_required": null
+}
+**Cost:** 45.00
+**Weight:** 13.000
+
+---
+
+## Breastplate
+
+**Desc:** This armor consists of a fitted metal chest piece worn with supple leather. Although it leaves the legs and arms relatively unprotected, this armor provides good protection for the wearer's vital organs while leaving the wearer relatively unencumbered.
+**Armor:** {
+  "name": "Breastplate",
+  "key": "srd_breastplate",
+  "category": "medium",
+  "ac_base": 14,
+  "ac_display": "14 + Dex modifier (max 2)",
+  "ac_add_dexmod": true,
+  "ac_cap_dexmod": 2,
+  "grants_stealth_disadvantage": false,
+  "strength_score_required": null
+}
+**Cost:** 400.00
+**Weight:** 20.000
+
+---
+
+## Chain mail
+
+**Desc:** Made of interlocking metal rings, chain mail includes a layer of quilted fabric worn underneath the mail to prevent chafing and to cushion the impact of blows. The suit includes gauntlets.
+**Armor:** {
+  "name": "Chain mail",
+  "key": "srd_chain-mail",
+  "category": "heavy",
+  "ac_base": 16,
+  "ac_display": "16",
+  "ac_add_dexmod": false,
+  "ac_cap_dexmod": null,
+  "grants_stealth_disadvantage": true,
+  "strength_score_required": 13
+}
+**Cost:** 75.00
+**Weight:** 55.000
+
+---
+
+## Chain shirt
+
+**Desc:** Made of interlocking metal rings, a chain shirt is worn between layers of clothing or leather. This armor offers modest protection to the wearer's upper body and allows the sound of the rings rubbing against one another to be muffled by outer layers.
+**Armor:** {
+  "name": "Chain shirt",
+  "key": "srd_chain-shirt",
+  "category": "medium",
+  "ac_base": 13,
+  "ac_display": "13 + Dex modifier (max 2)",
+  "ac_add_dexmod": true,
+  "ac_cap_dexmod": 2,
+  "grants_stealth_disadvantage": false,
+  "strength_score_required": null
+}
+**Cost:** 50.00
+**Weight:** 20.000
+
+---
+
+## Half plate
+
+**Desc:** Half plate consists of shaped metal plates that cover most of the wearer's body. It does not include leg protection beyond simple greaves that are attached with leather straps.
+**Armor:** {
+  "name": "Half plate",
+  "key": "srd_half-plate",
+  "category": "medium",
+  "ac_base": 15,
+  "ac_display": "15 + Dex modifier (max 2)",
+  "ac_add_dexmod": true,
+  "ac_cap_dexmod": 2,
+  "grants_stealth_disadvantage": true,
+  "strength_score_required": null
+}
+**Cost:** 750.00
+**Weight:** 40.000
+
+---
+
+## Hide Armor
+
+**Desc:** This crude armor consists of thick furs and pelts. It is commonly worn by barbarian tribes, evil humanoids, and other folk who lack access to the tools and materials needed to create better armor.
+**Armor:** {
+  "name": "Hide",
+  "key": "srd_hide",
+  "category": "medium",
+  "ac_base": 12,
+  "ac_display": "12 + Dex modifier (max 2)",
+  "ac_add_dexmod": true,
+  "ac_cap_dexmod": 2,
+  "grants_stealth_disadvantage": false,
+  "strength_score_required": null
+}
+**Cost:** 10.00
+**Weight:** 12.000
+
+---
+
+## Leather Armor
+
+**Desc:** The breastplate and shoulder protectors of this armor are made of leather that has been stiffened by being boiled in oil. The rest of the armor is made of softer and more flexible materials.
+**Armor:** {
+  "name": "Leather",
+  "key": "srd_leather",
+  "category": "light",
+  "ac_base": 11,
+  "ac_display": "11 + Dex modifier",
+  "ac_add_dexmod": true,
+  "ac_cap_dexmod": null,
+  "grants_stealth_disadvantage": false,
+  "strength_score_required": null
+}
+**Cost:** 10.00
+**Weight:** 10.000
+
+---
+
+## Padded Armor
+
+**Desc:** Padded armor consists of quilted layers of cloth and batting.
+**Armor:** {
+  "name": "Padded",
+  "key": "srd_padded",
+  "category": "light",
+  "ac_base": 11,
+  "ac_display": "11 + Dex modifier",
+  "ac_add_dexmod": true,
+  "ac_cap_dexmod": null,
+  "grants_stealth_disadvantage": true,
+  "strength_score_required": null
+}
+**Cost:** 5.00
+**Weight:** 8.000
+
+---
+
+## Plate Armor
+
+**Desc:** Plate consists of shaped, interlocking metal plates to cover the entire body. A suit of plate includes gauntlets, heavy leather boots, a visored helmet, and thick layers of padding underneath the armor. Buckles and straps distribute the weight over the body.
+**Armor:** {
+  "name": "Plate",
+  "key": "srd_plate",
+  "category": "heavy",
+  "ac_base": 18,
+  "ac_display": "18",
+  "ac_add_dexmod": false,
+  "ac_cap_dexmod": null,
+  "grants_stealth_disadvantage": true,
+  "strength_score_required": 15
+}
+**Cost:** 1500.00
+**Weight:** 65.000
+
+---
+
+## Ring mail
+
+**Desc:** This armor is leather armor with heavy rings sewn into it. The rings help reinforce the armor against blows from swords and axes. Ring mail is inferior to chain mail, and it's usually worn only by those who can't afford better armor.
+**Armor:** {
+  "name": "Ring mail",
+  "key": "srd_ring-mail",
+  "category": "heavy",
+  "ac_base": 14,
+  "ac_display": "14",
+  "ac_add_dexmod": false,
+  "ac_cap_dexmod": null,
+  "grants_stealth_disadvantage": true,
+  "strength_score_required": null
+}
+**Cost:** 30.00
+**Weight:** 40.000
+
+---
+
+## Scale mail
+
+**Desc:** This armor consists of a coat and leggings (and perhaps a separate skirt) of leather covered with overlapping pieces of metal, much like the scales of a fish. The suit includes gauntlets.
+**Armor:** {
+  "name": "Scale mail",
+  "key": "srd_scale-mail",
+  "category": "medium",
+  "ac_base": 14,
+  "ac_display": "14 + Dex modifier (max 2)",
+  "ac_add_dexmod": true,
+  "ac_cap_dexmod": 2,
+  "grants_stealth_disadvantage": true,
+  "strength_score_required": null
+}
+**Cost:** 50.00
+**Weight:** 45.000
+
+---
+
+## Splint Armor
+
+**Desc:** This armor is made of narrow vertical strips of metal riveted to a backing of leather that is worn over cloth padding. Flexible chain mail protects the joints.
+**Armor:** {
+  "name": "Splint",
+  "key": "srd_splint",
+  "category": "heavy",
+  "ac_base": 17,
+  "ac_display": "17",
+  "ac_add_dexmod": false,
+  "ac_cap_dexmod": null,
+  "grants_stealth_disadvantage": true,
+  "strength_score_required": 15
+}
+**Cost:** 200.00
+**Weight:** 60.000
+
+---
+
+## Studded Leather Armor
+
+**Desc:** Made from tough but flexible leather, studded leather is reinforced with close-set rivets or spikes.
+**Armor:** {
+  "name": "Studded leather",
+  "key": "srd_studded-leather",
+  "category": "light",
+  "ac_base": 12,
+  "ac_display": "12 + Dex modifier",
+  "ac_add_dexmod": true,
+  "ac_cap_dexmod": null,
+  "grants_stealth_disadvantage": false,
+  "strength_score_required": null
+}
+**Cost:** 45.00
+**Weight:** 13.000
+
+---
+
