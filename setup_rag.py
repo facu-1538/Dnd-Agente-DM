@@ -11,14 +11,16 @@ Requiere que GEMINI_API_KEY esté configurada en el archivo .env
 import requests
 import json
 import os
+import sys
 import time
+import hashlib
 from pathlib import Path
 from dotenv import load_dotenv
 from tqdm import tqdm
 
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_community.vectorstores import FAISS
-from langchain_text_splitters import MarkdownHeaderTextSplitter
+from langchain_text_splitters import MarkdownHeaderTextSplitter, RecursiveCharacterTextSplitter
 
 # Cargar variables de entorno desde .env
 load_dotenv()
@@ -258,9 +260,12 @@ def save_category(category: str, items: list, formatter) -> str:
     return str(ruta_archivo)
 
 
-def ingest_data():
+def ingest_data(force: bool = False):
     """
     Obtiene datos de la API Open5e y los guarda como archivos de texto Markdown.
+
+    Si ya existen archivos .txt en el directorio de datos y no se especifica
+    force=True, se omite la descarga para no repetir peticiones a la red.
 
     Categorías que se obtienen:
     - Hechizos (spells)
@@ -272,6 +277,18 @@ def ingest_data():
     print("INGESTA DE DATOS - D&D 5e AI Dungeon Master")
     print("=" * 60)
     print(f"Directorio de datos: {RAG_DATA_DIR.absolute()}")
+
+    # Verificar si ya existen archivos .txt con contenido
+    archivos_existentes = [f for f in RAG_DATA_DIR.glob("*.txt") if f.stat().st_size > 0] if RAG_DATA_DIR.exists() else []
+
+    if archivos_existentes and not force:
+        print(f"\nℹ Se encontraron {len(archivos_existentes)} archivos .txt existentes:")
+        for arch in archivos_existentes:
+            tamano_kb = arch.stat().st_size / 1024
+            print(f"  - {arch.name} ({tamano_kb:.1f} KB)")
+        print("\n✓ Omitiendo la descarga desde la API porque la información ya existe.")
+        print("  (Si deseas forzar una nueva descarga, ejecuta: python setup_rag.py --force)")
+        return
 
     # --- Hechizos ---
     print("\n[1/4] Obteniendo hechizos...")
@@ -325,118 +342,133 @@ def ingest_data():
             print(f"  ✗ No se obtuvo {nombre}")
 
 
+def es_cuota_diaria(error: Exception) -> bool:
+    """Detecta si el error 429 es por el límite diario (no el del minuto)."""
+    msg = str(error)
+    return "PerDay" in msg or "per day" in msg
+
+
 def build_vectorstore():
     """
-    Lee los archivos de texto generados por ingest_data() y construye el
-    vectorstore FAISS con embeddings de Google Gemini.
+    Construye (o continúa) el vectorstore FAISS con cache en disco.
 
-    El vectorstore se guarda en storage/vector_db/ para ser cargado
-    posteriormente por el RAGRetriever.
+    Guarda el índice después de cada lote y salta los fragmentos que ya
+    están indexados, así se puede repartir el trabajo en varios días.
+    Devuelve True si quedó completo, False si se cortó por la cuota diaria.
     """
     print("\n" + "=" * 60)
     print("CONSTRUCCIÓN DEL VECTORSTORE")
     print("=" * 60)
 
-    # Verificar que existe la API key
+    MODELO = "gemini-embedding-2"
+
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
-        raise ValueError("GEMINI_API_KEY no encontrada en las variables de entorno. "
-                         "Verifica tu archivo .env")
+        raise ValueError("GEMINI_API_KEY no encontrada. Verifica tu archivo .env")
 
-    # Crear directorio del vectorstore
     VECTOR_DB_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Leer todos los archivos .txt del directorio de datos
+    # No mezclar embeddings de modelos distintos en el mismo índice
+    archivo_modelo = VECTOR_DB_DIR / "modelo.txt"
+    if archivo_modelo.exists() and archivo_modelo.read_text().strip() != MODELO:
+        raise RuntimeError(
+            "El índice existente se creó con otro modelo de embeddings. "
+            "Borrá la carpeta storage/vector_db y volvé a correr."
+        )
+    archivo_modelo.write_text(MODELO)
+
     archivos_txt = list(RAG_DATA_DIR.glob("*.txt"))
     if not archivos_txt:
-        raise FileNotFoundError(
-            f"No se encontraron archivos .txt en {RAG_DATA_DIR}. "
-            "Ejecuta ingest_data() primero."
-        )
+        raise FileNotFoundError(f"No hay archivos .txt en {RAG_DATA_DIR}.")
 
-    print(f"\nArchivos encontrados: {len(archivos_txt)}")
-    for archivo in archivos_txt:
-        print(f"  - {archivo.name}")
-
-    # Configurar el splitter por encabezados Markdown
+    # Dividir por encabezados y luego recortar los fragmentos muy largos
     splitter = MarkdownHeaderTextSplitter(
         headers_to_split_on=[("##", "titulo")],
-        strip_headers=False
+        strip_headers=False,
     )
-
-    # Procesar todos los documentos
-    print("\nProcesando y dividiendo documentos...")
-    todos_los_docs = []
-
-    for archivo in tqdm(archivos_txt, desc="Procesando archivos"):
-        categoria = archivo.stem  # nombre sin extensión
-
-        with open(archivo, "r", encoding="utf-8") as f:
-            contenido = f.read()
-
-        # Dividir el contenido por encabezados ## 
-        documentos = splitter.split_text(contenido)
-
-        # Agregar metadata de categoría a cada documento
-        for doc in documentos:
+    docs = []
+    for archivo in archivos_txt:
+        categoria = archivo.stem
+        contenido = archivo.read_text(encoding="utf-8")
+        for doc in splitter.split_text(contenido):
             doc.metadata["categoria"] = categoria
+            docs.append(doc)
 
-        todos_los_docs.extend(documentos)
+    recortador = RecursiveCharacterTextSplitter(chunk_size=2000, chunk_overlap=200)
+    docs = recortador.split_documents(docs)
 
-    print(f"  Total de fragmentos: {len(todos_los_docs)}")
+    # Huella de cada fragmento (sin duplicados)
+    unicos = {}
+    for doc in docs:
+        base = f"{doc.metadata.get('categoria')}|{doc.page_content}"
+        huella = hashlib.sha1(base.encode("utf-8")).hexdigest()
+        doc.metadata["hash"] = huella
+        unicos[huella] = doc
+    print(f"\nTotal de fragmentos únicos: {len(unicos)}")
 
-    # Crear embeddings con Google Gemini
-    print("\nCreando embeddings con Google Gemini...")
-    print("  (Esto puede tardar varios minutos según la cantidad de datos)")
+    embeddings = GoogleGenerativeAIEmbeddings(model=MODELO, google_api_key=api_key)
 
-    embeddings = GoogleGenerativeAIEmbeddings(
-    model="gemini-embedding-2",
-    google_api_key=api_key
-    )
-
-       # Construir el vectorstore FAISS en lotes
-    print("\nConstruyendo vectorstore FAISS...")
+    # Cargar lo que ya está indexado (si existe)
     vectorstore = None
+    hechos = set()
+    if (VECTOR_DB_DIR / "index.faiss").exists():
+        vectorstore = FAISS.load_local(
+            str(VECTOR_DB_DIR), embeddings, allow_dangerous_deserialization=True
+        )
+        hechos = {d.metadata.get("hash") for d in vectorstore.docstore._dict.values()}
+    print(f"Ya indexados: {len(hechos)}")
+
+    pendientes = [d for h, d in unicos.items() if h not in hechos]
+    print(f"Pendientes:   {len(pendientes)}")
+
+    if not pendientes:
+        print("\n✓ No falta nada por indexar.")
+        return True
+
     lote = 50
-    for i in tqdm(range(0, len(todos_los_docs), lote), desc="Embeddings"):
-        grupo = todos_los_docs[i:i + lote]
+    for i in tqdm(range(0, len(pendientes), lote), desc="Embeddings"):
+        grupo = pendientes[i:i + lote]
         for intento in range(5):
             try:
                 if vectorstore is None:
                     vectorstore = FAISS.from_documents(grupo, embeddings)
                 else:
                     vectorstore.add_documents(grupo)
+                vectorstore.save_local(str(VECTOR_DB_DIR))  # guarda el progreso
                 break
             except Exception as e:
-                espera = 5 * 2 ** intento
-                print(f"  Error en el lote {i}: {e}. Reintentando en {espera}s...")
+                if es_cuota_diaria(e):
+                    print("\n⚠ Se agotó la cuota DIARIA de embeddings.")
+                    print("  El progreso quedó guardado. Volvé a correr mañana.")
+                    return False
+                espera = 30 * (intento + 1)
+                print(f"  Error en el lote {i}: {str(e)[:120]}... Reintentando en {espera}s")
                 time.sleep(espera)
         else:
             raise RuntimeError(f"Falló el lote que empieza en {i}")
-        time.sleep(45)
+        time.sleep(35)  # respetar el límite por minuto
 
-    # Guardar el vectorstore localmente
-    ruta_guardado = str(VECTOR_DB_DIR)
-    vectorstore.save_local(ruta_guardado)
-    print(f"\n✓ Vectorstore guardado en {VECTOR_DB_DIR.absolute()}")
-    print(f"  Fragmentos indexados: {len(todos_los_docs)}")
+    print(f"\n✓ Vectorstore completo en {VECTOR_DB_DIR.absolute()}")
+    return True
 
 
 if __name__ == "__main__":
     print("\n🐉 D&D 5e AI Dungeon Master - Setup RAG\n")
 
-    # Verificar API key antes de comenzar
     load_dotenv()
     if not os.getenv("GEMINI_API_KEY"):
-        print("ERROR: GEMINI_API_KEY no configurada.")
-        print("Edita el archivo .env y agrega: GEMINI_API_KEY=tu_clave_aqui")
+        print("ERROR: GEMINI_API_KEY no configurada en el .env")
         exit(1)
 
-    # Paso 1: Ingestar datos desde la API
-    ingest_data()
+    # Solo descarga si todavía no hay datos (borrá rag/data para forzar)
+    if any(RAG_DATA_DIR.glob("*.txt")):
+        print("Datos ya descargados en rag/data, se reutilizan.")
+    else:
+        ingest_data()
 
-    # Paso 2: Construir el vectorstore
-    build_vectorstore()
+    completo = build_vectorstore()
 
-    print("\n🎉 Setup completado exitosamente.")
-    print("Ahora puedes ejecutar: streamlit run app.py")
+    if completo:
+        print("\n🎉 Setup completado. Ahora podés ejecutar: streamlit run app.py")
+    else:
+        print("\n⏸ Setup incompleto: volvé a correr este script cuando se renueve la cuota.")
