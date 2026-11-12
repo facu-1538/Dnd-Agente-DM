@@ -207,6 +207,21 @@ if "welcomed" not in st.session_state:
 # FUNCIONES AUXILIARES
 # ---------------------------------------------------------------------------
 
+def texto_de(contenido) -> str:
+    """Extrae solo el texto de la respuesta, sea string o lista de bloques."""
+    if isinstance(contenido, str):
+        return contenido
+    if isinstance(contenido, list):
+        partes = []
+        for bloque in contenido:
+            if isinstance(bloque, str):
+                partes.append(bloque)
+            elif isinstance(bloque, dict) and bloque.get("type") == "text":
+                partes.append(bloque.get("text", ""))
+        return "".join(partes)
+    return str(contenido)
+
+
 def renderizar_tool_calls(tool_calls: list):
     """
     Muestra las llamadas a herramientas en expanders con íconos temáticos.
@@ -452,7 +467,7 @@ if not st.session_state.messages:
                     "Pregunta qué hace el jugador para comenzar. Responde SOLO en español."
                 )
                 resultado = run_agent(mensaje_inicio, thread_id=st.session_state.thread_id)
-                texto_bienvenida = resultado.get("response", BIENVENIDA_HARDCODED)
+                texto_bienvenida = texto_de(resultado.get("response", BIENVENIDA_HARDCODED))
                 tool_calls_bienvenida = resultado.get("tool_calls", [])
             except Exception as e:
                 texto_bienvenida = BIENVENIDA_HARDCODED
@@ -489,7 +504,7 @@ for mensaje in st.session_state.messages:
             renderizar_tool_calls(tool_calls)
 
         # Mostrar el contenido del mensaje
-        st.markdown(contenido)
+        st.markdown(texto_de(contenido))
 
 # ---------------------------------------------------------------------------
 # INPUT DEL USUARIO
@@ -513,7 +528,7 @@ if prompt := st.chat_input("¿Qué hace tu personaje?"):
             try:
                 # Llamar al agente principal
                 resultado = run_agent(prompt, thread_id=st.session_state.thread_id)
-                respuesta = resultado.get("response", "El Dungeon Master guarda silencio...")
+                respuesta = texto_de(resultado.get("response", "El Dungeon Master guarda silencio..."))
                 tool_calls = resultado.get("tool_calls", [])
 
                 # Mostrar tool calls en expanders ANTES de la respuesta final
