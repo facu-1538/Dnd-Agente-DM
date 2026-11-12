@@ -13,8 +13,7 @@ __pycache__/
 *$py.class
 *.so
 
-# Almacenamiento local generado (vectorstore y mapas renderizados)
-storage/vector_db/
+# Almacenamiento local generado (mapas renderizados)
 storage/maps/
 
 # IDE y editores

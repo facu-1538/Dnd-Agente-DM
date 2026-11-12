@@ -455,20 +455,24 @@ def build_vectorstore():
 if __name__ == "__main__":
     print("\n🐉 D&D 5e AI Dungeon Master - Setup RAG\n")
 
+    # Verificar API key antes de comenzar
     load_dotenv()
     if not os.getenv("GEMINI_API_KEY"):
-        print("ERROR: GEMINI_API_KEY no configurada en el .env")
+        print("ERROR: GEMINI_API_KEY no configurada.")
+        print("Edita el archivo .env y agrega: GEMINI_API_KEY=tu_clave_aqui")
         exit(1)
 
-    # Solo descarga si todavía no hay datos (borrá rag/data para forzar)
-    if any(RAG_DATA_DIR.glob("*.txt")):
-        print("Datos ya descargados en rag/data, se reutilizan.")
-    else:
-        ingest_data()
+    # Verificar si se solicitó forzar la descarga con --force
+    force_download = "--force" in sys.argv
 
+    # Paso 1: Ingestar datos desde la API (omite si ya existen archivos .txt)
+    ingest_data(force=force_download)
+
+    # Paso 2: Construir el vectorstore
     completo = build_vectorstore()
 
     if completo:
-        print("\n🎉 Setup completado. Ahora podés ejecutar: streamlit run app.py")
+        print("\n🎉 Setup completado exitosamente.")
+        print("Ahora puedes ejecutar: streamlit run app.py")
     else:
-        print("\n⏸ Setup incompleto: volvé a correr este script cuando se renueve la cuota.")
+        print("\n⏳ Proceso pausado por cuota. Puedes continuar mañana ejecutando de nuevo este script.")

@@ -93,9 +93,15 @@ class RAGRetriever:
             return False
 
         try:
+            # Determinar el modelo de embeddings usado al construir el vectorstore
+            archivo_modelo = VECTOR_DB_DIR / "modelo.txt"
+            modelo_embedding = "gemini-embedding-2"
+            if archivo_modelo.exists():
+                modelo_embedding = archivo_modelo.read_text().strip()
+
             # Inicializar el modelo de embeddings
             self.embeddings = GoogleGenerativeAIEmbeddings(
-                model="models/embedding-001",
+                model=modelo_embedding,
                 google_api_key=api_key
             )
 
