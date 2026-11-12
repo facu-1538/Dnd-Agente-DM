@@ -70,7 +70,7 @@ def create_agent() -> dict:
     # Crear el modelo LLM de Google Gemini
     # temperature=0.8 para respuestas creativas y narrativas
     llm = ChatGoogleGenerativeAI(
-        model="gemini-3.1-flash.lite",
+        model="gemini-3.1-flash-lite",
         temperature=0.8,
         google_api_key=api_key,
         convert_system_message_to_human=False,
