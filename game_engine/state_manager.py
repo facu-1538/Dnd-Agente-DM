@@ -362,6 +362,13 @@ class StateManager:
     # Métodos Generales
     # -------------------------------------------------------------------------
 
+    def get_state(self) -> dict:
+        """
+        Alias de get_full_state() para compatibilidad con la interfaz.
+        Retorna el estado completo del juego.
+        """
+        return self.load_state()
+
     def get_full_state(self) -> dict:
         """
         Obtiene el estado completo del juego.

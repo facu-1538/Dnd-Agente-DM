@@ -310,66 +310,43 @@ with st.sidebar:
     st.markdown("---")
 
     if _state_manager_available:
+        state_manager = get_state_manager()
         try:
-            sm = get_state_manager()
-            estado = sm.get_state()
-            jugador = estado.get("player", {})
-
-            # --- HP y barra de vida ---
-            hp = jugador.get("hp", 0)
-            max_hp = jugador.get("max_hp", 1)
-            max_hp = max(max_hp, 1)  # Evitar división por cero
-
-            st.metric(
-                label="❤️ Puntos de Vida",
-                value=f"{hp} / {max_hp}",
-                delta=None
-            )
-
-            # Barra de vida (verde → amarilla → roja según porcentaje)
-            porcentaje_vida = max(0.0, min(1.0, hp / max_hp))
-            st.progress(porcentaje_vida)
-
-            st.markdown("---")
-
-            # --- Información del personaje ---
-            nombre = jugador.get("name", "Aventurero")
-            clase = jugador.get("character_class", "Desconocido")
-            nivel = jugador.get("level", 1)
-            oro = jugador.get("gold", 0)
-
-            st.markdown(f"""
-| Atributo | Valor |
-|----------|-------|
-| 🧙 **Nombre** | {nombre} |
-| ⚔️ **Clase** | {clase} |
-| 📈 **Nivel** | {nivel} |
-| 💰 **Oro** | {oro} gp |
-""")
-
-            # --- Enemigos activos ---
-            st.subheader("👹 Enemigos Activos")
-            npcs = estado.get("npcs", {})
-            enemigos_activos = [
-                (nombre_npc, datos)
-                for nombre_npc, datos in npcs.items()
-                if datos.get("hostile", False) and datos.get("hp", 0) > 0
-            ]
-
-            if enemigos_activos:
-                for nombre_npc, datos_npc in enemigos_activos:
-                    hp_npc = datos_npc.get("hp", "?")
-                    max_hp_npc = datos_npc.get("max_hp", hp_npc)
-                    st.markdown(f"**{nombre_npc}** — ❤️ {hp_npc}/{max_hp_npc}")
-                    if isinstance(hp_npc, (int, float)) and isinstance(max_hp_npc, (int, float)) and max_hp_npc > 0:
-                        st.progress(max(0.0, min(1.0, hp_npc / max_hp_npc)))
-            else:
-                st.markdown("*No hay enemigos en combate*")
-
+            hp = state_manager.get_player_hp()
+            max_hp = state_manager.get_player_max_hp()
+            info = state_manager.get_player_info()
         except Exception as e:
-            st.warning(f"⚠️ Error al cargar el estado: {e}")
-            # Mostrar estado por defecto
-            st.metric(label="❤️ Puntos de Vida", value="? / ?")
+            st.warning(f"Error al cargar el estado: {e}")
+            hp, max_hp, info = None, None, {}
+
+        if hp is not None and max_hp:
+            st.metric("❤️ Puntos de Vida", f"{hp} / {max_hp}")
+            st.progress(max(0.0, min(1.0, hp / max_hp)))
+
+            st.caption(
+                f"{info.get('nombre', 'Aventurero')} · "
+                f"{info.get('clase', '?')} · Nivel {info.get('nivel', '?')}"
+            )
+            st.write(f"💰 Oro: {info.get('oro', 0)}")
+            st.write(f"⭐ Experiencia: {info.get('experiencia', 0)}")
+
+        # --- Enemigos activos ---
+        st.markdown("---")
+        st.subheader("👹 Enemigos Activos")
+        try:
+            npcs = state_manager.get_active_npcs()
+        except Exception:
+            npcs = {}
+
+        if npcs:
+            for nombre_npc, datos_npc in npcs.items():
+                hp_npc = datos_npc.get("hp", "?")
+                max_hp_npc = datos_npc.get("max_hp", hp_npc)
+                st.markdown(f"**{nombre_npc}** — ❤️ {hp_npc}/{max_hp_npc}")
+                if isinstance(hp_npc, (int, float)) and isinstance(max_hp_npc, (int, float)) and max_hp_npc > 0:
+                    st.progress(max(0.0, min(1.0, hp_npc / max_hp_npc)))
+        else:
+            st.markdown("*No hay enemigos en combate*")
     else:
         # Estado por defecto si el módulo no está disponible
         st.warning(f"⚠️ Motor de juego no disponible:\n`{_state_manager_error}`")
@@ -381,7 +358,7 @@ with st.sidebar:
     st.subheader("🗺️ Mapa del Dungeon")
     mapa_path = Path("storage/maps/current_view.png")
     if mapa_path.exists():
-        st.image(str(mapa_path), use_column_width=True, caption="Vista actual del dungeon")
+        st.image(str(mapa_path), width="stretch", caption="Vista actual del dungeon")
     else:
         st.markdown("""
 <div style="
