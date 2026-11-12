@@ -1,0 +1,18 @@
+{
+  "jugador": {
+    "nombre": "Aventurero",
+    "clase": "Guerrero",
+    "nivel": 1,
+    "hp": 100,
+    "max_hp": 100,
+    "oro": 50,
+    "experiencia": 0
+  },
+  "npcs": {},
+  "salas_descubiertas": [
+    "sala_entrada",
+    "celda_inicial",
+    "pasillo_principal"
+  ],
+  "sesion_iniciada": "2026-11-12T14:39:07.846630"
+}
