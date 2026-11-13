@@ -152,7 +152,8 @@ def resumen_tool(registro: dict) -> str:
         if nombre == "heal_player" and datos and "nuevo_hp" in datos:
             return f"+{datos.get('curacion')} HP ({datos.get('hp_anterior')} → {datos['nuevo_hp']})"
         if nombre == "query_rules_rag":
-            fuentes = re.findall(r"^\[(.+?)\]", salida, flags=re.M)
+            # Encabezados "[Fuente 1: monsters.txt › Goblin]": se resume el primero
+            fuentes = re.findall(r"^\[Fuente \d+: (.+?)\]", salida, flags=re.M)
             if fuentes:
                 return f"{len(fuentes)} fragmentos · {fuentes[0]}"
         if datos and "error" in datos:
@@ -214,6 +215,15 @@ def mostrar_resultado(registro: dict):
         st.markdown(linea)
         if datos.get("reason"):
             st.caption(datos["reason"])
+    elif nombre == "query_rules_rag":
+        # Primero, de qué documentos salió la información (es lo que el DM debe citar)
+        m = re.search(r"^FUENTES CONSULTADAS: (.+)$", salida, flags=re.M)
+        if m:
+            st.markdown("**Fuentes consultadas**")
+            for fuente in m.group(1).split(";"):
+                st.markdown(f"- :blue[:material/description:] `{fuente.strip()}`")
+        cuerpo = salida.split("\n\nFUENTES CONSULTADAS:")[0]
+        st.code(cuerpo if len(cuerpo) <= 700 else cuerpo[:700] + "…", language=None, wrap_lines=True)
     elif datos is not None:
         st.code(json.dumps(datos, ensure_ascii=False, indent=2), language="json")
     else:
