@@ -1,0 +1,39 @@
+/*
+ * Estilos mínimos. Colores, fuentes y radios van en .streamlit/config.toml;
+ * acá solo lo que el tema no puede expresar: la tipografía de lectura del DM.
+ * Se apunta a las clases .st-key-narr* (contenedores con key= en app.py), no a clases internas.
+ */
+@import url('https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,500;0,600;1,400&display=swap');
+
+/* Narración del DM: serif cómoda de leer, tamaño moderado */
+[class*="st-key-narr"] p,
+[class*="st-key-narr"] li {
+    font-family: 'Lora', Georgia, 'Times New Roman', serif;
+    font-size: 1.02rem;
+    line-height: 1.7;
+}
+
+/* Títulos dentro de la narración (p. ej. "1. Elección de raza"): discretos, en dorado */
+[class*="st-key-narr"] h1,
+[class*="st-key-narr"] h2,
+[class*="st-key-narr"] h3,
+[class*="st-key-narr"] h4 {
+    font-size: 1.15rem;
+    color: #e3a73b;
+    margin: 0.9rem 0 0.3rem;
+}
+
+/* Razonamiento del modelo: tono apagado y algo más chico, para leerse como "pensamiento"
+   y no competir con la narración */
+[class*="st-key-razon"] p,
+[class*="st-key-razon"] li {
+    color: #9d9bb2;
+    font-size: 0.9rem;
+    line-height: 1.55;
+}
+
+/* Separadores horizontales que el modelo genera con --- : más sutiles */
+[class*="st-key-narr"] hr {
+    margin: 0.9rem 0;
+    opacity: 0.25;
+}

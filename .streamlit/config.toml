@@ -1,0 +1,48 @@
+# Tema del Dungeon Master: oscuro, acento carmesí y dorado.
+# Se configura aquí (y no con CSS) para que aplique a todos los elementos por igual.
+# Tipografía: Pixelify Sans en títulos (identidad pixel-art), Inter en la interfaz.
+# La narración del DM usa una serif legible (ver ui/style.css).
+
+[theme]
+base = "dark"
+primaryColor = "#b3263a"             # botones y barras: carmesí (contraste suficiente con texto blanco)
+backgroundColor = "#0f0f17"
+secondaryBackgroundColor = "#171724"
+textColor = "#e8e0cc"
+borderColor = "#2a2a3d"
+linkColor = "#e3a73b"
+
+# Paleta semántica: :red[], :orange[] (dorado), :green[], etc. en los iconos de la UI
+redColor = "#e5566a"
+orangeColor = "#e3a73b"
+yellowColor = "#e9c35a"
+greenColor = "#5cb87a"
+blueColor = "#6a9df0"
+violetColor = "#a784e8"
+grayColor = "#8a8aa0"
+
+font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap"
+headingFont = "Pixelify Sans:https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@500;600;700&display=swap"
+codeFont = "JetBrains Mono:https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap"
+baseFontSize = 15
+headingFontSizes = ["2rem", "1.5rem", "1.25rem", "1.1rem", "1rem", "0.9rem"]
+headingFontWeights = [700, 600, 600, 600, 600, 600]
+baseRadius = "10px"
+buttonRadius = "8px"
+metricValueFontSize = "1.4rem"
+paddingTop = "2rem"
+paddingBottom = "1rem"
+
+# Sidebar: un poco más oscura que el área principal, con el set completo de contraste
+[theme.sidebar]
+backgroundColor = "#0b0b12"
+secondaryBackgroundColor = "#151521"
+textColor = "#e8e0cc"
+borderColor = "#262638"
+primaryColor = "#b3263a"
+linkColor = "#e3a73b"
+codeBackgroundColor = "#151521"
+codeTextColor = "#e8e0cc"
+headingFontSizes = ["1.3rem", "1.1rem", "1rem", "0.95rem", "0.9rem", "0.85rem"]
+paddingTop = "1rem"
+paddingBottom = "1rem"
