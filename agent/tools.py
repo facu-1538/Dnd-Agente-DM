@@ -32,10 +32,14 @@ def query_rules_rag(query: str, category: str = "general") -> str:
 
     Args:
         query: La consulta en lenguaje natural sobre la regla o elemento de D&D
-        category: Categoría opcional (spells, monsters, conditions, equipment, general)
+        category: Documento donde buscar. Valores válidos: spells, monsters, conditions,
+                  armor, weapons, rules o general (busca en todos). Con cualquier otro
+                  valor se busca en todos los documentos.
 
     Returns:
-        Texto con la información recuperada de la base de conocimientos
+        Fragmentos recuperados, cada uno con su documento de origen ("archivo.txt › Título"),
+        y al final la línea FUENTES CONSULTADAS. Al usar esta información en la respuesta,
+        cita la fuente así: (Fuente: monsters.txt › Goblin).
     """
     # Importar aquí para evitar imports circulares al cargar el módulo
     try:

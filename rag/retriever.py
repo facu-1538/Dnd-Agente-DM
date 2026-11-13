@@ -136,6 +136,37 @@ class RAGRetriever:
             return self.load()
         return self.vectorstore is not None
 
+    @staticmethod
+    def _fuente(doc) -> str:
+        """
+        Identifica de dónde viene un fragmento: "archivo.txt › Título".
+
+        La metadata `categoria` es el nombre del documento del corpus (rag/data/<categoria>.txt)
+        y `titulo` es la entrada (hechizo, monstruo, regla) dentro de ese documento.
+        """
+        archivo = f"{doc.metadata.get('categoria', 'desconocido')}.txt"
+        titulo = doc.metadata.get("titulo", "")
+        return f"{archivo} › {titulo}" if titulo else archivo
+
+    def _formatear(self, documentos: list) -> str:
+        """
+        Arma el texto que recibe el agente: cada fragmento con un encabezado que nombra
+        su documento de origen, y al final la lista de fuentes consultadas, para que el
+        modelo pueda citarlas literalmente en su respuesta.
+        """
+        partes = []
+        fuentes = []
+        for i, doc in enumerate(documentos, 1):
+            fuente = self._fuente(doc)
+            if fuente not in fuentes:           # sin repetir, respetando el orden
+                fuentes.append(fuente)
+            partes.append(f"[Fuente {i}: {fuente}]\n{doc.page_content}")
+
+        return (
+            "\n\n---\n\n".join(partes)
+            + "\n\nFUENTES CONSULTADAS: " + "; ".join(fuentes)
+        )
+
     def search(self, query: str, k: int = 4) -> str:
         """
         Realiza una búsqueda por similitud semántica en el vectorstore.
@@ -166,23 +197,7 @@ class RAGRetriever:
             if not documentos:
                 return "No se encontró información relevante sobre ese tema en la base de conocimientos."
 
-            # Concatenar el contenido de los documentos con separadores
-            partes = []
-            for i, doc in enumerate(documentos, 1):
-                # Incluir metadata si está disponible
-                categoria = doc.metadata.get("categoria", "")
-                titulo = doc.metadata.get("titulo", "")
-
-                encabezado = f"[Fuente {i}"
-                if categoria:
-                    encabezado += f" - {categoria}"
-                if titulo:
-                    encabezado += f": {titulo}"
-                encabezado += "]"
-
-                partes.append(f"{encabezado}\n{doc.page_content}")
-
-            return "\n\n---\n\n".join(partes)
+            return self._formatear(documentos)
 
         except Exception as e:
             return f"Error al realizar la búsqueda: {e}"
@@ -236,18 +251,7 @@ class RAGRetriever:
             # Limitar a k resultados
             documentos = documentos[:k]
 
-            # Concatenar el contenido de los documentos con separadores
-            partes = []
-            for i, doc in enumerate(documentos, 1):
-                titulo = doc.metadata.get("titulo", "")
-                encabezado = f"[{category.capitalize()} {i}"
-                if titulo:
-                    encabezado += f": {titulo}"
-                encabezado += "]"
-
-                partes.append(f"{encabezado}\n{doc.page_content}")
-
-            return "\n\n---\n\n".join(partes)
+            return self._formatear(documentos)
 
         except Exception as e:
             return f"Error al realizar la búsqueda por categoría: {e}"
