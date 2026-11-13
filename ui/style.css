@@ -224,9 +224,19 @@
 
 /* ---- Chat: los mensajes del jugador a la derecha, las respuestas del DM a la izquierda ---- */
 [data-testid="stChatMessage"]:has(.msg-ancla) {
-    flex-direction: row-reverse; width: fit-content; max-width: 80%; margin-left: auto;
-    padding: .6rem .9rem; border-radius: 18px 18px 4px 18px;
-    background: rgba(179, 38, 58, .16); border: 1px solid rgba(179, 38, 58, .35);
+    flex-direction: row-reverse; align-items: flex-start; gap: .8rem;
+    width: fit-content; max-width: 85%; margin-left: auto;
+    background: none !important; border: none !important; padding: 0;
+}
+/* La nube es solo el contenido; el avatar queda afuera y la nube lo "señala" con una colita */
+[data-testid="stChatMessage"]:has(.msg-ancla) [data-testid="stChatMessageContent"] {
+    position: relative; padding: .6rem .95rem; border-radius: 16px 4px 16px 16px;
+    background: #2a1620; border: 1px solid #6b2536;
+}
+[data-testid="stChatMessage"]:has(.msg-ancla) [data-testid="stChatMessageContent"]::after {
+    content: ""; position: absolute; top: 13px; right: -7px; width: 12px; height: 12px;
+    background: #2a1620; border-top: 1px solid #6b2536; border-right: 1px solid #6b2536;
+    transform: rotate(45deg);
 }
 [data-testid="stChatMessage"]:has(.msg-ancla) p { text-align: left; }
 
