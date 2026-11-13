@@ -38,9 +38,10 @@ PARTIDAS_DIR = pathlib.Path(os.getenv("DM_PARTIDAS_DIR", "storage/partidas"))
 def _legacy_file() -> pathlib.Path:
     """
     Archivo de estado de versiones anteriores (una sola partida global). Se busca JUNTO a la carpeta de
-    partidas (en producción, storage/game_state.json): si existe y todavía no hay partidas, se importa
-    como la primera para no perder lo que el jugador ya tenía. Con DM_PARTIDAS_DIR apuntando a una
-    carpeta temporal (las pruebas), nunca puede tocar el archivo real.
+    partidas (en producción, storage/game_state.json): si existe y todavía no hay partidas, se COPIA
+    como la primera para no perder lo que el jugador ya tenía. Nunca se renombra ni se borra: si la
+    versión anterior sigue corriendo (o se vuelve a ella), su archivo sigue ahí. Con DM_PARTIDAS_DIR
+    apuntando a una carpeta temporal (las pruebas), nunca puede tocar el archivo real.
     """
     return PARTIDAS_DIR.parent / "game_state.json"
 
@@ -208,8 +209,7 @@ class StateManager:
             try:
                 with open(legacy, "r", encoding="utf-8") as f:
                     self._id = self._crear_carpeta(_migrar(json.load(f)))
-                legacy.replace(legacy.with_suffix(".json.migrado"))
-                self._escribir_activa(self._id)
+                self._escribir_activa(self._id)           # el archivo viejo se deja intacto
                 return
             except (OSError, json.JSONDecodeError):
                 pass                                  # estado viejo ilegible: se empieza de cero
@@ -225,6 +225,16 @@ class StateManager:
         else:
             self._id = self._crear_carpeta()
         self._escribir_activa(self._id)
+
+    def validar_activa(self) -> str:
+        """
+        Comprueba que la carpeta de la partida activa siga existiendo y, si no (la borraron desde otra
+        pestaña o a mano), elige otra: la más reciente, o una nueva. Devuelve el id activo.
+        """
+        with self._lock:
+            if not self._id or not (PARTIDAS_DIR / self._id / "estado.json").exists():
+                self._abrir_inicial()
+            return self._id
 
     def nueva_partida(self) -> str:
         """Crea una partida nueva, la deja activa y devuelve su id. Las anteriores NO se tocan."""
