@@ -385,9 +385,10 @@ def ver_mapa_grande():
 
 
 # Aspecto de la ficha: emoji de la raza y ícono (Material) de la clase, cada uno con su color
-_RAZAS = {"humano": ("🧑", "#e3a73b"), "elfo": ("🧝", "#5fd08a"), "enano": ("⛏️", "#d98b4a"),
-          "mediano": ("🍀", "#8fc96b"), "semielfo": ("🧝", "#7fd6b0"), "semiorco": ("🗡️", "#9bb36a"),
-          "tiefling": ("😈", "#d6577a"), "draconido": ("🐉", "#e0834d"), "gnomo": ("🔧", "#c58be0")}
+_RAZAS = {"humano": ("person", "#e3a73b"), "elfo": ("nature", "#5fd08a"), "enano": ("hardware", "#d98b4a"),
+          "mediano": ("cottage", "#8fc96b"), "semielfo": ("nature_people", "#7fd6b0"),
+          "semiorco": ("fitness_center", "#9bb36a"), "tiefling": ("whatshot", "#d6577a"),
+          "draconido": ("air", "#e0834d"), "gnomo": ("construction", "#c58be0")}
 _CLASES = {"guerrero": ("swords", "#e0584d"), "mago": ("auto_fix_high", "#8b7bff"),
            "picaro": ("visibility_off", "#4fc3d9"), "clerigo": ("health_and_safety", "#f0d98a"),
            "barbaro": ("local_fire_department", "#f0883e"), "paladin": ("shield", "#e8c04a"),
@@ -408,11 +409,11 @@ def html_ficha(info: dict) -> str:
         return (f'<div class="ficha"><div class="ficha-cuerpo"><div class="ficha-nombre">{nombre}</div>'
                 '<div class="ficha-vacia">Personaje sin crear</div></div></div>')
     raza, clase = str(info.get("raza") or "").strip(), str(info.get("clase") or "").strip()
-    emoji, c_raza = _RAZAS.get(_clave(raza), ("✨", "#b9b6cc"))
+    icono_raza, c_raza = _RAZAS.get(_clave(raza), ("person", "#b9b6cc"))
     icono, c_clase = _CLASES.get(_clave(clase), ("shield_person", "#b9b6cc"))
     chips = ""
     if raza:
-        chips += f'<span class="chip" style="--c:{c_raza}"><span class="emoji">{emoji}</span>{html.escape(raza.capitalize())}</span>'
+        chips += f'<span class="chip" style="--c:{c_raza}"><span class="ms">{icono_raza}</span>{html.escape(raza.capitalize())}</span>'
     if clase:
         chips += f'<span class="chip" style="--c:{c_clase}"><span class="ms">{icono}</span>{html.escape(clase.capitalize())}</span>'
     nivel = html.escape(str(info.get("nivel", 1)))
@@ -453,10 +454,14 @@ def guardar_historial():
         st.toast(f"No se pudo guardar el historial: {e}", icon=":material/error:")
 
 
+TAB_PARTIDA, TAB_HISTORIAL = ":material/shield_person: Partida", ":material/history: Historial"
+
+
 def cambiar_a(partida_id: str):
     """Abre una partida guardada (callback del historial). El chat se carga solo en la ejecución siguiente."""
     if _sm.abrir_partida(partida_id):
         st.session_state.partida_id = partida_id
+        st.session_state["ir_a_partida"] = True           # se pasa a "Partida" para ver sus stats
 
 
 def nueva_partida():
@@ -499,7 +504,14 @@ if not ruta_mapa().exists() and get_map_renderer is not None:
 
 with st.sidebar:
     st.button("Nueva partida", icon=":material/add:", width="stretch", key="nueva_partida", on_click=nueva_partida)
-    tab_partida, tab_historial = st.tabs([":material/shield_person: Partida", ":material/history: Historial"])
+    tab_partida, tab_historial = st.tabs([TAB_PARTIDA, TAB_HISTORIAL])
+    if st.session_state.pop("ir_a_partida", False):
+        # Streamlit no permite elegir la pestaña desde Python sin recargar la app (y recargar cortaría un turno
+        # en curso): un script fijo hace el clic en la primera pestaña, una sola vez.
+        st.html("""<script>setTimeout(() => {
+            const t = document.querySelector('[data-testid="stSidebar"] [role="tab"]');
+            if (t) t.click();
+        }, 60);</script>""", unsafe_allow_javascript=True)
 
     # --- Pestaña "Partida": ficha, vida, ubicación, enemigos y mapa (compacto, sin scroll) ---
     with tab_partida:
@@ -582,11 +594,14 @@ with st.sidebar:
                         confirmar_borrado(p["id"], titulo)
                 st.caption(detalle_partida(p))
 
+    # Ajustes: fuera de las pestañas para poder anclarlos al fondo de la barra (el CSS los oculta en "Partida")
+    with st.container(key="ajustes"):
         st.markdown("**Ajustes**")
         # Pasos abiertos: despliega el razonamiento y cada herramienta (útil para la demo y la revisión)
         pasos_abiertos = st.toggle(
-            "Mostrar pasos abiertos", value=True, key="pasos_abiertos",
-            help="Despliega el razonamiento y cada herramienta en el chat. Apagalo para una vista compacta.",
+            "Dejar los pasos abiertos", value=False, key="pasos_abiertos",
+            help="Mientras el agente responde, el razonamiento y cada herramienta se ven desplegados. "
+                 "Al terminar se cierran (podés abrirlos con un clic); con esto activo quedan abiertos.",
         )
         st.caption(
             f"RAG {'activo' if _vectorstore_available else 'sin inicializar'} · "
@@ -808,7 +823,7 @@ if prompt := st.chat_input("¿Qué hace tu personaje?", submit_mode="disable"):
                 # El paso aparece apenas el agente decide invocar la tool, ya con sus argumentos
                 with tools_box:
                     estado = st.status(etiqueta_tool(registro), type="step", state="running",
-                                       expanded=pasos_abiertos)
+                                       expanded=True)          # en vivo siempre abierto: se ve cada paso
                     with estado:
                         mostrar_args(registro["input"])
                 pasos[ev["id"]] = (registro, estado)
@@ -838,6 +853,8 @@ if prompt := st.chat_input("¿Qué hace tu personaje?", submit_mode="disable"):
                 label=":violet[:material/psychology:] Razonamiento", state="complete",
                 expanded=pasos_abiertos,
             )
+        for _, estado_paso in pasos.values():      # al terminar la respuesta, los pasos se cierran
+            estado_paso.update(expanded=pasos_abiertos)
         texto_box.markdown(texto)
         if not error:
             st.caption(resumen_turno(len(tool_calls), seg_turno))
