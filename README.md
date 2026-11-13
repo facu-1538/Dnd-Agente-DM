@@ -14,11 +14,12 @@ Un Dungeon Master virtual construido con un **agente de LangChain** (`create_age
 
 > *"Entro a la armería."*
 >
-> 1. El agente **consulta el reglamento** (RAG) para obtener las estadísticas del enemigo que aparece.
-> 2. **Tira los dados** del ataque contra la CA del jugador (y el daño si impacta).
-> 3. **Aplica el daño** al estado real del personaje (la barra de vida de la UI baja).
-> 4. **Revela la sala en el mapa** y lo vuelve a renderizar.
-> 5. Narra el resultado y deja el mapa listo para **descargar** (producto final tangible).
+> 1. El agente **revela la sala en el mapa**, fija la ubicación del jugador y lo vuelve a renderizar.
+> 2. **Consulta el reglamento** (RAG) para obtener las estadísticas del enemigo que aparece y las cita.
+> 3. **Registra al enemigo** en el combate (se ve en la barra lateral, con su recompensa de XP y oro).
+> 4. **Tira los dados** del ataque contra la CA del jugador (y el daño si impacta).
+> 5. **Aplica el daño** al estado real: baja la vida del jugador o la del enemigo. Si el enemigo cae, el jugador cobra su XP y oro (y puede subir de nivel).
+> 6. Narra el resultado y deja el mapa listo para **descargar** (producto final tangible).
 
 ## Arquitectura
 
@@ -35,6 +36,7 @@ flowchart LR
     T --> R["query_rules_rag"] --> V[("FAISS<br/>SRD 5.1")]
     T --> D["execute_dice_roll"]
     T --> H["damage_player / heal_player"] --> S[("game_state.json")]
+    T --> E["set_character / manage_enemy"] --> S
     T --> P["switch_and_render_map"] --> MAP[("mapa PNG")]
 
     A -.->|"eventos: razonamiento,<br/>tool_call, tool_result, texto"| UI
@@ -49,7 +51,7 @@ flowchart LR
 | **Memoria de corto plazo** | `InMemorySaver` (checkpointer de LangGraph), por `thread_id` | Permite turnos que dependen de los anteriores ("¿cuánto salió en esa tirada?"). Se pierde al reiniciar el proceso. |
 | **RAG** | FAISS + embeddings `gemini-embedding-2` sobre 6 documentos del SRD | El modelo no memoriza las reglas con fidelidad; el RAG aporta hechizos, monstruos y reglas exactas. |
 | **UI** | Streamlit | Permite chat con markdown y mostrar el flujo del agente en streaming (ver §3.5 de la consigna). |
-| **Middleware** | **Ninguno** | Los reintentos ante errores 429/5xx los resuelve el cliente de Gemini (`max_retries=6`, backoff exponencial de 1 s a 60 s) y el tope de pasos se fija con `recursion_limit`. No hacía falta código ni middleware adicional. |
+| **Middleware** | **Ninguno** | Los reintentos ante errores 429/5xx los resuelve el cliente de Gemini (`max_retries=4` configurable con `GEMINI_MAX_RETRIES`, backoff exponencial con esperas de 1, 2, 4 y 8 s) y el tope de pasos se fija con `recursion_limit`. No hacía falta código ni middleware adicional. |
 
 ### Herramientas
 
@@ -58,7 +60,11 @@ flowchart LR
 | `query_rules_rag` | **Externa** (base vectorial) | Busca en el SRD hechizos, monstruos, condiciones, armas, armaduras y reglas. | `query: str`, `category: str` (`spells`, `monsters`, `conditions`, `armor`, `weapons`, `rules` o `general`) → fragmentos, cada uno con su documento de origen (`archivo.txt › Título`) y la línea `FUENTES CONSULTADAS` |
 | `execute_dice_roll` | **Propia** | Ejecuta tiradas reales (`1d20+5`, `2d6`, `4d6kh3`) y compara con CA/CD. | `dice_formula`, `reason`, `target_dc_or_ac` → JSON con dados, total y éxito |
 | `damage_player` / `heal_player` | **Propias** | Modifican la vida del jugador en el estado real (`storage/game_state.json`). | `amount: int`, `source: str` → JSON con HP anterior y nuevo |
-| `switch_and_render_map` | **Propia** + externa (archivo) | Revela salas (validadas contra el layout) y renderiza el mapa con niebla de guerra. | `revealed_nodes: list[str]` → texto con salas nuevas y PNG en `storage/maps/` |
+| `manage_enemy` | **Propia** | Lleva los enemigos del combate: `spawn` (con HP y recompensa), `damage` y `remove`. Al derrotar a uno, el jugador cobra su oro y XP automáticamente y puede subir de nivel. | `action`, `name`, `hp`, `amount`, `xp`, `gold` → JSON con el estado del enemigo y la recompensa |
+| `set_character` | **Propia** | Guarda la ficha del personaje cuando el jugador termina de crearlo. | `name`, `race`, `char_class`, `level` → JSON con la ficha |
+| `switch_and_render_map` | **Propia** + externa (archivo) | Mueve al jugador: revela salas (validadas contra el layout), fija su ubicación y renderiza el mapa con niebla de guerra. | `revealed_nodes: list[str]`, `current_room: str` → texto con salas nuevas, ubicación y PNG en `storage/maps/` |
+
+**Estado del juego:** vive en `storage/game_state.json` y lo modifican solo las tools (ficha, vida, oro, XP, enemigos, sala actual y ruta, y un registro de eventos de la partida). Cada modificación es una **transacción atómica** bajo un lock: LangGraph puede ejecutar varias tools a la vez en un mismo turno y, sin esto, una pisaría los cambios de otra. En cada turno el agente recibe una línea `[ESTADO: ...]` con los datos reales, así no inventa ni usa valores viejos.
 
 Todas manejan sus errores sin cortar el flujo (devuelven un mensaje/JSON de error que el agente puede leer).
 
@@ -134,6 +140,7 @@ GEMINI_API_KEY=tu_clave_real
 |---|---|---|
 | `GEMINI_MODEL` | `gemini-3.1-flash-lite` | Cambiar el modelo del agente (debe soportar tool calling). |
 | `DM_INCLUDE_THOUGHTS` | `1` | Con `0` no se pide el razonamiento al modelo. |
+| `GEMINI_MAX_RETRIES` | `4` | Intentos ante errores 429/5xx. Más intentos esperan más antes de mostrar el error. |
 
 ### 4. Ejecutar
 
@@ -143,7 +150,7 @@ streamlit run app.py
 
 Se abre en <http://localhost:8501>. El índice vectorial ya viene en el repositorio, así que **no hace falta ejecutar `setup_rag.py`** para jugar.
 
-> Los tiers gratuitos tienen límite de peticiones. El primer turno puede tardar (carga del índice). Si ves un error 429, esperá un minuto.
+> Los tiers gratuitos tienen límite de peticiones. La latencia es variable: un turno de combate de 4 llamadas al modelo tardó 192 s después de varias pruebas seguidas, mientras que un turno de reglas de 2 llamadas tardó 9 s tras una pausa de 75 s. Probablemente se deba al límite de peticiones del tier gratuito (no lo confirmamos con logs). Para una demo conviene dejar respirar un minuto entre pruebas. Si ves un error 429, esperá un minuto y reenviá el mensaje.
 
 ## Cómo demostrar cada requisito
 
@@ -151,7 +158,9 @@ Se abre en <http://localhost:8501>. El índice vectorial ya viene en el reposito
 |---|---|
 | **Tarea de varios pasos** | Escribí `Un goblin me ataca en la armería.` y mirá la secuencia de herramientas. |
 | **Visibilidad de tools (streaming)** | Cada herramienta aparece en la línea de tiempo apenas se invoca, con sus argumentos; al terminar muestra el resumen del resultado. Al abrirla se ve el resultado completo. |
-| **Razonamiento** | Bloque plegable "Razonamiento", diferenciado de la respuesta. Se muestra en vivo mientras el modelo piensa. |
+| **Razonamiento** | Bloque "Razonamiento", diferenciado de la respuesta. Se muestra en vivo mientras el modelo piensa. |
+| **Pasos abiertos** | El interruptor **Mostrar pasos abiertos** (sidebar, activo por defecto) despliega el razonamiento y cada herramienta; apagado, la vista es compacta. Cada paso muestra cuánto tardó y cada turno cierra con `N herramientas · X s`. |
+| **Estado coherente** | Creá tu personaje (`Soy Aldric, humano guerrero`) y mirá cómo la sidebar muestra la ficha. Tras un combate se actualizan la vida, el oro, la XP, la ubicación y los enemigos. |
 | **Memoria** | Después de una tirada preguntá `¿Cuánto salió en esa tirada?`: responde sin que se lo repitas. |
 | **RAG y citas** | Preguntá `¿Qué hace el hechizo Bola de Fuego?`: aparece la consulta de reglas con sus **fuentes consultadas** (al abrir el paso), y la respuesta cita el documento, por ejemplo `(Fuente: spells.txt › Fireball)`. |
 | **Producto tangible** | Tras explorar salas, el botón **Descargar mapa** (en el chat y en la sidebar) exporta el PNG. |
@@ -188,8 +197,10 @@ Para regenerar el índice completo, borrá `storage/vector_db/` y ejecutá `pyth
 
 - **Memoria en proceso:** el `InMemorySaver` se pierde al reiniciar Streamlit. Para persistirla bastaría cambiarlo por un checkpointer de SQLite.
 - **Dungeon fijo:** el mapa tiene 8 salas definidas en `game_engine/map_renderer.py`; el agente solo decide cuáles revelar.
-- **Ficha del personaje:** la creación de personaje se conversa con el DM, pero no se guarda en la ficha de la sidebar (nombre, clase y nivel son los del estado por defecto).
-- **Cuota gratuita:** los límites de Gemini pueden producir errores 429 o latencias altas; los reintentos no ayudan si se agota la cuota diaria.
+- **Ficha simplificada:** se guardan nombre, raza, clase y nivel. Los atributos no se guardan (el DM asigna la matriz estándar al crear el personaje) y la vida máxima es siempre 100.
+- **Oro y XP:** solo se obtienen al derrotar enemigos; no hay botín en cofres.
+- **Bienvenida fija:** es un texto estático (no gasta una llamada al modelo) que se registra en la memoria del agente.
+- **Cuota gratuita:** los límites de Gemini pueden producir errores 429 o latencias altas (ver la nota de la sección de ejecución); los reintentos no ayudan si se agota la cuota diaria.
 - **Idioma del razonamiento:** llega en inglés (resumen del proveedor).
 - **Índice FAISS:** se carga con `allow_dangerous_deserialization=True` (formato pickle). Es seguro porque el índice lo generamos nosotros, pero no cargues índices de terceros.
 
