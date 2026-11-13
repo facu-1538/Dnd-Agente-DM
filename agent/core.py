@@ -55,10 +55,18 @@ INCLUDE_THOUGHTS = os.getenv("DM_INCLUDE_THOUGHTS", "1") != "0"
 # Tope de pasos del grafo (cada tool call consume ~2). Evita bucles infinitos.
 RECURSION_LIMIT = 25
 
-# Intentos del cliente de Gemini ante 429/5xx. Con backoff exponencial (1, 2, 4, 8 s...),
-# 4 intentos esperan unos 15 s como máximo antes de rendirse; con 6 (el valor por defecto
-# del cliente) la pantalla podía quedar quieta más de un minuto. Configurable por entorno.
+# Intentos TOTALES por llamada al modelo (incluye el pedido original: 4 = 1 pedido + 3
+# reintentos, con esperas de ~1, 2 y 4 s). Se reintenta ante 429/5xx y también ante
+# timeouts. Con 6 (el valor por defecto del cliente) la pantalla podía quedar quieta
+# mucho más tiempo. Configurable por entorno.
 MAX_RETRIES = int(os.getenv("GEMINI_MAX_RETRIES", "4"))
+
+# Tope en segundos de CADA intento HTTP (antes: sin tope, una respuesta colgada esperaba
+# indefinidamente). Peor caso por llamada al modelo: MAX_RETRIES x TIMEOUT + esperas
+# (~127 s con los valores por defecto). Acota una respuesta colgada; no una saturación
+# sostenida de la cuota. Nota: step_timeout de LangGraph NO sirve para esto (se probó):
+# lanza el error pero espera igual a que termine el hilo bloqueado.
+TIMEOUT = float(os.getenv("GEMINI_TIMEOUT", "30"))
 
 _TOOLS = [
     query_rules_rag, execute_dice_roll, switch_and_render_map,
@@ -99,6 +107,7 @@ def build_agent():
         temperature=0.8,
         google_api_key=api_key,
         max_retries=MAX_RETRIES,
+        timeout=TIMEOUT,
         include_thoughts=INCLUDE_THOUGHTS,
         # Verificado con gemini-3.1-flash-lite: include_thoughts SOLO no devuelve nada;
         # hace falta thinking_budget=-1 (pensamiento dinámico) para recibir el bloque

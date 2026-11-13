@@ -459,12 +459,41 @@ Si prefieres que lo elija yo, escribe *sortea* y te propondré una combinación.
 
 *El destino aguarda.*"""
 
+def bienvenida_segun_estado() -> str:
+    """
+    Si ya hay una partida en curso (el estado se guarda en disco, pero la memoria de la
+    conversación no) —por ejemplo, tras recargar la página— la retoma en lugar de pedir
+    crear el personaje otra vez mientras la barra lateral sigue mostrando al anterior.
+    """
+    try:
+        estado = get_state_manager().get_state()
+        j = estado["jugador"]
+        if not j.get("ficha_creada"):
+            return BIENVENIDA
+        sala = estado["sala_actual"]
+        lugar = DUNGEON_LAYOUT.get(sala, {}).get("nombre", sala)
+        texto = (
+            f"**Bienvenido de nuevo, {j['nombre']}.** Retomas tu aventura: {j['raza']} {j['clase']} "
+            f"de nivel {j['nivel']}, con {j['hp']}/{j['max_hp']} puntos de vida, en la sala **{lugar}**."
+        )
+        if estado["npcs"]:
+            enemigos = ", ".join(d["nombre"] for d in estado["npcs"].values())
+            texto += f" El combate continúa: {enemigos} sigue frente a ti."
+        return texto + (
+            "\n\n*La memoria de la charla se reinició: tu personaje y el mapa se conservan, "
+            "pero el relato anterior no.* ¿Qué haces?"
+        )
+    except Exception:
+        return BIENVENIDA
+
+
 # La bienvenida es un texto fijo: no gasta una llamada al modelo (cuota gratuita) y es instantánea.
 # Se registra en la memoria del agente para que sepa qué le dijo al jugador.
 if not st.session_state.messages:
+    texto_bienvenida = bienvenida_segun_estado()
     if not st.session_state.welcomed:
-        seed_conversation(st.session_state.thread_id, BIENVENIDA)
-    st.session_state.messages.append({"role": "assistant", "content": BIENVENIDA, "tool_calls": []})
+        seed_conversation(st.session_state.thread_id, texto_bienvenida)
+    st.session_state.messages.append({"role": "assistant", "content": texto_bienvenida, "tool_calls": []})
     st.session_state.welcomed = True
 
 # ---------------------------------------------------------------------------

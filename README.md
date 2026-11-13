@@ -51,7 +51,7 @@ flowchart LR
 | **Memoria de corto plazo** | `InMemorySaver` (checkpointer de LangGraph), por `thread_id` | Permite turnos que dependen de los anteriores ("¿cuánto salió en esa tirada?"). Se pierde al reiniciar el proceso. |
 | **RAG** | FAISS + embeddings `gemini-embedding-2` sobre 6 documentos del SRD | El modelo no memoriza las reglas con fidelidad; el RAG aporta hechizos, monstruos y reglas exactas. |
 | **UI** | Streamlit | Permite chat con markdown y mostrar el flujo del agente en streaming (ver §3.5 de la consigna). |
-| **Middleware** | **Ninguno** | Los reintentos ante errores 429/5xx los resuelve el cliente de Gemini (`max_retries=4` configurable con `GEMINI_MAX_RETRIES`, backoff exponencial con esperas de 1, 2, 4 y 8 s) y el tope de pasos se fija con `recursion_limit`. No hacía falta código ni middleware adicional. |
+| **Middleware** | **Ninguno** | Los reintentos ante errores 429/5xx los resuelve el cliente de Gemini (`max_retries=4` configurable con `GEMINI_MAX_RETRIES`: 1 pedido + 3 reintentos con esperas de ~1, 2 y 4 s, y un `timeout` de 30 s por intento configurable con `GEMINI_TIMEOUT`) y el tope de pasos se fija con `recursion_limit`. No hacía falta código ni middleware adicional. |
 
 ### Herramientas
 
@@ -140,7 +140,8 @@ GEMINI_API_KEY=tu_clave_real
 |---|---|---|
 | `GEMINI_MODEL` | `gemini-3.1-flash-lite` | Cambiar el modelo del agente (debe soportar tool calling). |
 | `DM_INCLUDE_THOUGHTS` | `1` | Con `0` no se pide el razonamiento al modelo. |
-| `GEMINI_MAX_RETRIES` | `4` | Intentos ante errores 429/5xx. Más intentos esperan más antes de mostrar el error. |
+| `GEMINI_MAX_RETRIES` | `4` | Intentos totales por llamada (incluye el original) ante 429/5xx/timeouts. |
+| `GEMINI_TIMEOUT` | `30` | Segundos máximos por intento. Peor caso por llamada: intentos × timeout + esperas. |
 
 ### 4. Ejecutar
 
