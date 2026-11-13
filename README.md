@@ -52,7 +52,7 @@ flowchart LR
 | **Agente** | `create_agent` de LangChain (sin Deep Agents) | Resuelve el bucle modelo ↔ herramientas con tool calling. |
 | **Modelo** | `gemini-3.1-flash-lite` (Google Gemini) | Soporta tool calling (verificado), tiene tier gratuito y devuelve resúmenes de razonamiento. |
 | **Memoria** | `SqliteSaver` (checkpointer de LangGraph) en `storage/memoria.db`; el `thread_id` es el id de la partida | Permite turnos que dependen de los anteriores ("¿cuánto salió en esa tirada?") y **sobrevive a recargar la página y a reiniciar Streamlit**. Si un turno se corta a mitad de una tool, `reparar_hilo()` deja la conversación utilizable. |
-| **RAG** | FAISS + embeddings `gemini-embedding-2` sobre 6 documentos del SRD | El modelo no memoriza las reglas con fidelidad; el RAG aporta hechizos, monstruos y reglas exactas. |
+| **RAG** | FAISS + embeddings `gemini-embedding-2` sobre 7 documentos del SRD (1184 fragmentos) | El modelo no memoriza las reglas con fidelidad; el RAG aporta hechizos, monstruos, clases y reglas exactas. Combina similitud vectorial con **filtros por metadatos** (self-query). |
 | **UI** | Streamlit | Permite chat con markdown y mostrar el flujo del agente en streaming (ver §3.5 de la consigna). |
 | **Middleware** | **Ninguno** | Los reintentos ante errores 429/5xx los resuelve el cliente de Gemini (`max_retries=4` configurable con `GEMINI_MAX_RETRIES`: 1 pedido + 3 reintentos con esperas de ~1, 2 y 4 s, y un `timeout` de 30 s por intento configurable con `GEMINI_TIMEOUT`) y el tope de pasos se fija con `recursion_limit`. No hacía falta código ni middleware adicional. |
 
@@ -60,7 +60,7 @@ flowchart LR
 
 | Tool | Tipo | Qué hace | Entradas → Salida |
 |---|---|---|---|
-| `query_rules_rag` | **Externa** (base vectorial) | Busca en el SRD hechizos, monstruos, condiciones, armas, armaduras y reglas. | `query: str`, `category: str` (`spells`, `monsters`, `conditions`, `armor`, `weapons`, `rules` o `general`) → fragmentos, cada uno con su documento de origen (`archivo.txt › Título`) y la línea `FUENTES CONSULTADAS` |
+| `query_rules_rag` | **Externa** (base vectorial) | Busca en el SRD hechizos, monstruos, **clases**, condiciones, armas, armaduras y reglas. Combina similitud semántica con filtros por metadatos que el propio agente completa (self-query). | `query: str`, `category: str` (`spells`, `monsters`, `conditions`, `armor`, `weapons`, `rules`, `classes` o `general`) y filtros opcionales `spell_level: int`, `school: str`, `monster_type: str`, `max_cr: float` → hasta 4 fragmentos, cada uno con su documento de origen (`archivo.txt › Título`) y la línea `FUENTES CONSULTADAS` |
 | `execute_dice_roll` | **Propia** | Ejecuta tiradas reales (`1d20+5`, `2d6`, `4d6kh3`) y compara con CA/CD. | `dice_formula`, `reason`, `target_dc_or_ac` → JSON con dados, total y éxito |
 | `damage_player` / `heal_player` | **Propias** | Modifican la vida del jugador en el estado real (`storage/partidas/<id>/estado.json`). | `amount: int`, `source: str` → JSON con HP anterior y nuevo |
 | `manage_enemy` | **Propia** | Lleva los enemigos del combate: `spawn` (con HP y recompensa), `damage` y `remove`. Al derrotar a uno, el jugador cobra su oro y XP automáticamente y puede subir de nivel. | `action`, `name`, `hp`, `amount`, `xp`, `gold` → JSON con el estado del enemigo y la recompensa |
@@ -80,14 +80,15 @@ Todas manejan sus errores sin cortar el flujo (devuelven un mensaje/JSON de erro
 app.py                  # UI Streamlit: chat, streaming, sidebar (partidas, ficha, mapa)
 agent/
   core.py               # create_agent, checkpointer, stream_agent() / run_agent()
-  tools.py              # las 5 herramientas
+  tools.py              # las 8 herramientas
   prompt.py             # system prompt del DM + reglas
 game_engine/
   state_manager.py      # partidas guardadas y su estado (vida, oro, salas, enemigos)
   map_renderer.py       # layout del dungeon y mapa ilustrado con niebla de guerra (Pillow)
   report.py             # crónica de la aventura en PDF (ReportLab)
 rag/
-  data/*.txt            # corpus (6 documentos del SRD)
+  data/*.txt            # corpus (7 documentos del SRD)
+  metadata.py           # metadatos estructurados de cada entrada (nivel, escuela, tipo, CR, clase)
   retriever.py          # búsqueda en FAISS
 setup_rag.py            # ingesta + chunking + embeddings + índice
 assets/map/             # ilustraciones del mapa y del PDF: íconos de las salas, brújula, ficha, portada, pergamino y niebla (generadas por el equipo con IA)
@@ -175,6 +176,7 @@ Se abre en <http://localhost:8501>. El índice vectorial ya viene en el reposito
 | **Pasos abiertos** | Mientras el agente responde, el razonamiento y cada herramienta se ven desplegados; **al terminar se cierran** y se abren con un clic. El interruptor **Dejar los pasos abiertos** (pestaña Partida, debajo del mapa) los deja abiertos. Cada paso muestra cuánto tardó y cada turno cierra con `N herramientas · X s`. |
 | **Estado coherente** | Creá tu personaje (`Soy Aldric, humano guerrero`) y mirá cómo la sidebar muestra la ficha. Tras un combate se actualizan la vida, el oro, la XP, la ubicación y los enemigos. |
 | **Tiradas de dados** | Cada tirada muestra, debajo de su paso, una tarjeta con un d20 animado, el número, la cuenta (`7 + 4 = 11`), la dificultad y el veredicto (**ÉXITO** / **FALLO**, y ¡CRÍTICO! o ¡PIFIA! con un 20 o un 1 natural). |
+| **Self-query (filtros por metadatos)** | Preguntá `¿Qué hechizos de evocación de nivel 3 existen?` o `¿Qué muertos vivientes de CR 1 o menos puedo encontrar?`: al abrir el paso de la consulta se ven los filtros que el agente armó solo (`spell_level=3`, `school=evocation`, `monster_type=undead`, `max_cr=1`). También `Contame qué obtiene un mago al nivel 1` (documento de clases). |
 | **Memoria** | Después de una tirada preguntá `¿Cuánto salió en esa tirada?`: responde sin que se lo repitas. La memoria es persistente: recargá la página (F5) o reiniciá Streamlit y el agente sigue acordándose. |
 | **Partidas guardadas** | Jugá un par de turnos y recargá la página: vuelve la misma partida con todo el chat. **Nueva partida** crea otra; la pestaña **Historial** abre o borra las guardadas, y al abrir una se pasa a **Partida** para ver sus stats. |
 | **Navegación del chat** | En el borde derecho aparece un riel con un punto por cada mensaje tuyo: al pasar el mouse muestra su mini título y al hacer clic salta a esa parte de la conversación. |
@@ -183,14 +185,20 @@ Se abre en <http://localhost:8501>. El índice vectorial ya viene en el reposito
 
 ## RAG: corpus e ingesta (reproducible)
 
-**Corpus:** 6 documentos de texto en `rag/data/`: `spells`, `monsters`, `conditions`, `weapons`, `armor` y `rules`. Provienen del SRD 5.1 de Wizards of the Coast a través de la API pública [Open5e](https://open5e.com/).
+**Corpus:** 7 documentos de texto en `rag/data/`: `spells`, `monsters`, `conditions`, `weapons`, `armor`, `rules` y `classes` (las 12 clases del SRD y su subclase). Provienen del SRD 5.1 de Wizards of the Coast a través de la API pública [Open5e](https://open5e.com/).
 
 **Pipeline** (`setup_rag.py`):
 
-1. **Ingesta:** descarga cada categoría de la API Open5e y la guarda como Markdown en `rag/data/*.txt`. Si esos archivos ya existen, se omite la descarga.
+1. **Ingesta:** descarga cada categoría de la API Open5e y la guarda como Markdown en `rag/data/*.txt`. Es incremental: solo descarga las categorías cuyo `.txt` todavía no existe (con `--force`, todas).
 2. **Chunking:** primero por encabezados (`##`, una entrada por hechizo o monstruo) y luego `RecursiveCharacterTextSplitter` con `chunk_size=2000` y `chunk_overlap=200`.
 3. **Embeddings:** `gemini-embedding-2` por lotes de 50, con pausas para respetar el límite por minuto.
-4. **Índice:** FAISS local en `storage/vector_db/`. Cada fragmento guarda su `categoria` (= archivo de origen) y su `titulo`.
+4. **Índice y metadatos:** FAISS local en `storage/vector_db/`. Cada fragmento guarda `categoria` (= archivo de origen), `titulo` y, según el documento, metadatos estructurados: `nivel` y `escuela` (hechizos), `tipo` y `cr` (monstruos), `subclase` y `dado_golpe` (clases).
+
+**Metadatos y self-query:** la similitud vectorial sola no sabe filtrar ("hechizos de nivel 3 de evocación", "monstruos de CR menor a 1") ni encuentra lo que no está nombrado como lo busca el jugador. Por eso `query_rules_rag` recibe filtros opcionales que **el agente completa a partir de la pregunta** (self-query) y el retriever (`search_filtered` en `rag/retriever.py`) los aplica sobre los metadatos. Además, si la consulta nombra una entrada (`Fireball`, `Wizard`), esa entrada va primero. Decisiones de diseño:
+
+- Los metadatos se extraen de la **entrada completa** (`rag/metadata.py`) y se copian a todos sus fragmentos: el chunking de 2000 caracteres parte las entradas largas y los fragmentos de continuación no traen la línea `**Nivel:**` ni `**Tipo:**`. Como el contenido de los fragmentos no cambia, **no hizo falta recalcular los embeddings** (el script completa los metadatos de lo ya indexado sin gastar cuota).
+- Los filtros se aplican sobre **todo el índice** (`fetch_k` = tamaño del índice). FAISS filtra *después* de traer los más cercanos y, con el valor por defecto de LangChain (20), una categoría chica como `armor` quedaba con resultados incompletos o vacíos si otros documentos se parecían más a la consulta. Medido con un índice de prueba: antes 1 resultado, ahora los 2 que existen.
+- Si los filtros no devuelven nada, la tool lo dice explícitamente en vez de caer en silencio a una búsqueda general.
 
 **Tamaño del contexto:** la tool devuelve como máximo 4 fragmentos de ≤2000 caracteres (~8000 caracteres), para no saturar el contexto del agente.
 
@@ -213,6 +221,7 @@ Para regenerar el índice completo, borrá `storage/vector_db/` y ejecutá `pyth
 
 - **Un solo jugador por servidor:** el estado de la partida es un singleton del proceso (una partida activa a la vez). Dos pestañas jugando partidas distintas al mismo tiempo se pisarían; está pensado para una sesión de juego.
 - **Turno cortado:** si se cierra la página a mitad de un turno, al volver se agrega una nota del DM y el siguiente mensaje continúa con normalidad.
+- **Metadatos y clases:** solo hechizos, monstruos y clases tienen metadatos filtrables; el resto se busca por similitud y categoría. El documento de clases es el del SRD 5.1: 12 clases con una subclase cada una. La coincidencia de título es una heurística simple (por ejemplo, un título de una sola palabra necesita 5 letras o más y una consulta corta, salvo que la búsqueda esté acotada a su categoría).
 - **Dungeon fijo:** el mapa tiene 8 salas definidas en `game_engine/map_renderer.py`; el agente solo decide cuáles revelar.
 - **Crónica en PDF:** el balance y la cronología se calculan sobre los últimos 300 sucesos del registro (la cronología del PDF muestra los últimos 150). El epílogo lo escribe el modelo y puede agregar color narrativo; los datos de la ficha, el mapa y las cifras salen del estado. Usa fuentes estándar de PDF, por lo que se omiten símbolos que no traen (flechas, emojis).
 - **Ficha simplificada:** se guardan nombre, raza, clase y nivel. Los atributos no se guardan (el DM asigna la matriz estándar al crear el personaje) y la vida máxima es siempre 100.
