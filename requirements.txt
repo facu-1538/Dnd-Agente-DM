@@ -1,13 +1,21 @@
-langchain
-langchain-google-genai
-langgraph
-streamlit
-faiss-cpu
-sentence-transformers
-requests
-pillow
-python-dotenv
-langchain-community
-tqdm
-tiktoken
-openai
+# Dependencias directas del proyecto, con las versiones con las que se probó
+# (Python 3.14, Windows 11). Cada una se usa en el código; no hay paquetes sobrantes.
+# Las dependencias transitivas (google-genai, numpy, etc.) las resuelve pip.
+
+# Agente y orquestación
+langchain==1.5.0                  # create_agent
+langchain-core==1.8.0             # @tool, mensajes
+langgraph==1.2.21                 # InMemorySaver (checkpointer) y streaming del grafo
+langchain-google-genai==4.5.0     # ChatGoogleGenerativeAI y GoogleGenerativeAIEmbeddings (Gemini)
+
+# RAG
+langchain-community==0.4.2        # integración con FAISS
+langchain-text-splitters==1.1.3   # chunking del corpus
+faiss-cpu==1.16.0                 # base vectorial local
+requests==2.34.2                  # descarga del corpus desde la API Open5e (setup_rag.py)
+tqdm==4.70.1                      # barra de progreso de la ingesta
+
+# Interfaz y utilidades
+streamlit==1.67.0                 # UI web
+pillow==13.0.0                    # renderizado del mapa del dungeon (PNG)
+python-dotenv==1.2.4              # lectura de .env
