@@ -1,15 +1,27 @@
 """
 core.py - Orquestador del Agente Dungeon Master
-Gestiona la creación, inicialización y ejecución del agente LLM con tools de LangChain.
-Implementa el loop de tool calling para que el agente pueda ejecutar múltiples herramientas
-antes de dar la respuesta final al usuario.
+
+Construye el agente con `create_agent` de LangChain (sin Deep Agents) y expone:
+  - stream_agent(): generador de eventos para que la UI muestre en vivo cada tool,
+    el razonamiento y el texto de la respuesta.
+  - run_agent():    versión bloqueante (la usa la bienvenida de app.py).
+
+Memoria de corto plazo: un checkpointer (InMemorySaver) guarda el estado de la
+conversación por `thread_id`. El agente y el checkpointer viven a nivel de módulo;
+Streamlit re-ejecuta app.py en cada interacción pero NO re-importa este módulo,
+por eso la memoria sobrevive entre turnos. Se pierde al reiniciar el proceso.
 """
 
 import os
 import sys
+from typing import Iterator
+
 from dotenv import load_dotenv
+from langchain.agents import create_agent as lc_create_agent
+from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, ToolMessage
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.errors import GraphRecursionError
 
 # Cargar variables de entorno desde .env
 load_dotenv()
@@ -17,52 +29,52 @@ load_dotenv()
 # Asegurar que el directorio raíz del proyecto esté en el path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Importar las herramientas del agente DM
-from agent.tools import query_rules_rag, execute_dice_roll, switch_and_render_map
-
-# Importar el prompt del sistema
+from agent.tools import (
+    query_rules_rag,
+    execute_dice_roll,
+    switch_and_render_map,
+    damage_player,
+    heal_player,
+)
 from agent.prompt import DM_SYSTEM_PROMPT
 
 # ---------------------------------------------------------------------------
-# Estado global del agente (patrón Singleton)
+# Configuración
 # ---------------------------------------------------------------------------
 
-# Instancia global del agente (se crea una sola vez)
+# Modelo configurable por entorno (por defecto el que venía usando el equipo)
+MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
+
+# Pedir los bloques de razonamiento al proveedor. Si el modelo no los devuelve,
+# la UI simplemente no muestra nada (ver README). Se puede apagar con DM_INCLUDE_THOUGHTS=0.
+INCLUDE_THOUGHTS = os.getenv("DM_INCLUDE_THOUGHTS", "1") != "0"
+
+# Tope de pasos del grafo (cada tool call consume ~2). Evita bucles infinitos.
+RECURSION_LIMIT = 25
+
+_TOOLS = [query_rules_rag, execute_dice_roll, switch_and_render_map, damage_player, heal_player]
+
+# Checkpointer y agente: singletons de módulo (ver docstring)
+_checkpointer = InMemorySaver()
 _agent = None
 
-# Historial de mensajes por hilo de conversación (thread_id → lista de mensajes)
-_conversation_history: dict[str, list] = {}
-
-# Lista de todas las tools disponibles para el agente
-_TOOLS = [query_rules_rag, execute_dice_roll, switch_and_render_map]
-
-from agent.tools import damage_player, heal_player
-_TOOLS = _TOOLS + [damage_player, heal_player]
-
-# Mapa de nombre de tool → función callable (para ejecutar las tools)
-_TOOL_MAP = {tool.name: tool for tool in _TOOLS}
-
-# Número máximo de iteraciones del loop de tool calling (evitar loops infinitos)
-_MAX_TOOL_ITERATIONS = 10
-
 
 # ---------------------------------------------------------------------------
-# Creación y gestión del agente
+# Creación del agente
 # ---------------------------------------------------------------------------
 
-def create_agent() -> dict:
+def build_agent():
     """
-    Crea y configura el agente DM con el modelo LLM y las herramientas.
+    Crea el agente con `create_agent`.
 
-    Returns:
-        dict con claves:
-            - "llm_with_tools": El LLM con las tools vinculadas (ChatGoogleGenerativeAI)
-            - "memory": Objeto de gestión de memoria (diccionario de historiales por thread)
+    Reintentos: `max_retries` se traduce a HttpRetryOptions del SDK de Google, que
+    reintenta ante 408/429/5xx con backoff exponencial (1 s hasta 60 s, con jitter).
+    Por eso no se usa middleware de reintentos. Límite: un 429 por cuota DIARIA
+    agotada no se recupera reintentando; en ese caso el agente devuelve un error.
 
     Raises:
-        ValueError: Si GEMINI_API_KEY no está configurada en el entorno
+        ValueError: si GEMINI_API_KEY no está configurada.
     """
-    # Verificar que la API key esté disponible
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
         raise ValueError(
@@ -70,235 +82,40 @@ def create_agent() -> dict:
             "Crea o edita el archivo .env con: GEMINI_API_KEY=tu_clave_aqui"
         )
 
-    # Crear el modelo LLM de Google Gemini
-    # temperature=0.8 para respuestas creativas y narrativas
     llm = ChatGoogleGenerativeAI(
-        model="gemini-3.1-flash-lite",
+        model=MODEL_NAME,
         temperature=0.8,
         google_api_key=api_key,
-        convert_system_message_to_human=False,
+        max_retries=6,
+        include_thoughts=INCLUDE_THOUGHTS,
+        # Verificado con gemini-3.1-flash-lite: include_thoughts SOLO no devuelve nada;
+        # hace falta thinking_budget=-1 (pensamiento dinámico) para recibir el bloque
+        # "thinking". Gemini entrega un resumen del razonamiento (en inglés).
+        thinking_budget=-1 if INCLUDE_THOUGHTS else None,
     )
 
-    # Vincular las herramientas al LLM para que pueda invocarlas
-    llm_with_tools = llm.bind_tools(_TOOLS)
-
-    # La "memoria" en este caso es el diccionario global de historiales
-    # (compatible con la interfaz esperada)
-    memory = _conversation_history
-
-    return {
-        "llm_with_tools": llm_with_tools,
-        "memory": memory,
-    }
+    return lc_create_agent(
+        model=llm,
+        tools=_TOOLS,
+        system_prompt=DM_SYSTEM_PROMPT,
+        checkpointer=_checkpointer,
+    )
 
 
-def get_agent() -> dict:
-    """
-    Retorna la instancia singleton del agente, creándola si no existe.
-
-    Returns:
-        dict con el agente configurado (ver create_agent())
-    """
+def get_agent():
+    """Retorna el agente singleton, creándolo la primera vez."""
     global _agent
-
     if _agent is None:
-        _agent = create_agent()
-
+        _agent = build_agent()
     return _agent
 
 
 # ---------------------------------------------------------------------------
-# Ejecución de una tool individual
+# Utilidades
 # ---------------------------------------------------------------------------
 
-def _execute_tool(tool_name: str, tool_input: dict) -> str:
-    """
-    Ejecuta una tool específica por nombre con los argumentos dados.
-
-    Args:
-        tool_name: Nombre de la tool a ejecutar (debe estar en _TOOL_MAP)
-        tool_input: Diccionario con los argumentos de la tool
-
-    Returns:
-        String con el resultado de la tool, o mensaje de error si falla
-    """
-    if tool_name not in _TOOL_MAP:
-        return f"❌ Tool desconocida: '{tool_name}'. Tools disponibles: {list(_TOOL_MAP.keys())}"
-
-    tool_func = _TOOL_MAP[tool_name]
-
-    try:
-        # Invocar la tool con los argumentos proporcionados
-        result = tool_func.invoke(tool_input)
-        return str(result)
-    except Exception as e:
-        return f"❌ Error al ejecutar la tool '{tool_name}': {e}"
-
-
-
-# ---------------------------------------------------------------------------
-# Función principal de ejecución del agente
-# ---------------------------------------------------------------------------
-
-def run_agent(user_message: str, thread_id: str = "default") -> dict:
-    """
-    Ejecuta el agente con el mensaje del usuario y retorna la respuesta final.
-
-    Implementa el loop de tool calling:
-    1. Envía el mensaje al LLM junto con el historial de conversación
-    2. Si el LLM responde con tool_calls, ejecuta cada herramienta
-    3. Agrega los resultados de las tools al historial
-    4. Repite hasta que el LLM dé una respuesta de texto final (sin tool_calls)
-    5. Retorna la respuesta final junto con el registro de tools usadas
-
-    Args:
-        user_message: El mensaje del usuario (lo que hace/dice el jugador)
-        thread_id: Identificador único del hilo de conversación (para mantener historial)
-                   Usar un ID único por sesión de juego.
-
-    Returns:
-        dict con claves:
-            - "response": str con la respuesta narrativa final del DM
-            - "tool_calls": list de dicts con las tools ejecutadas:
-                [{"name": str, "input": dict, "output": str}, ...]
-
-    Raises:
-        No lanza excepciones; los errores se capturan y se retornan en "response"
-    """
-    try:
-        # Obtener el agente singleton
-        agent = get_agent()
-        llm_with_tools = agent["llm_with_tools"]
-
-        # Inicializar el historial para este thread si no existe
-        if thread_id not in _conversation_history:
-
-            user_message = _estado_jugador() + user_message  # (agregado)
-            # Comenzar el historial con el prompt del sistema
-            _conversation_history[thread_id] = [
-                SystemMessage(content=DM_SYSTEM_PROMPT)
-            ]
-
-        # Agregar el mensaje del usuario al historial
-        _conversation_history[thread_id].append(
-            HumanMessage(content=user_message)
-        )
-
-        # Registro de todas las tools ejecutadas en esta llamada
-        executed_tool_calls = []
-
-        # --- Loop de tool calling ---
-        for iteration in range(_MAX_TOOL_ITERATIONS):
-            # Enviar el historial completo al LLM
-            ai_response = llm_with_tools.invoke(_conversation_history[thread_id])
-
-            # Agregar la respuesta del LLM al historial
-            _conversation_history[thread_id].append(ai_response)
-
-            # Verificar si el LLM quiere ejecutar tools
-            if not ai_response.tool_calls:
-                # No hay más tool calls → el LLM dio la respuesta final de texto
-                final_response = ai_response.content
-                break
-
-            # Procesar cada tool call solicitada por el LLM
-            for tool_call in ai_response.tool_calls:
-                tool_name = tool_call["name"]
-                tool_input = tool_call["args"]
-                tool_call_id = tool_call["id"]
-
-                # Ejecutar la tool
-                tool_output = _execute_tool(tool_name, tool_input)
-
-                # Registrar la tool ejecutada para el retorno
-                executed_tool_calls.append({
-                    "name": tool_name,
-                    "input": tool_input,
-                    "output": tool_output,
-                })
-
-                # Agregar el resultado de la tool al historial como ToolMessage
-                _conversation_history[thread_id].append(
-                    ToolMessage(
-                        content=tool_output,
-                        tool_call_id=tool_call_id,
-                    )
-                )
-
-        else:
-            # Se alcanzó el límite de iteraciones sin respuesta final
-            final_response = (
-                "⚠️ El Dungeon Master necesita un momento para organizar sus pensamientos... "
-                "(Se alcanzó el límite de procesamiento interno. Intenta reformular tu acción.)"
-            )
-
-        return {
-            "response": final_response,
-            "tool_calls": executed_tool_calls,
-        }
-
-    except Exception as e:
-        # Capturar cualquier error inesperado y retornarlo de forma amigable
-        error_message = (
-            f"❌ Error en el Dungeon Master AI: {e}\n\n"
-            "El Dungeon Master tuvo un contratiempo técnico. "
-            "Por favor, intenta de nuevo o reinicia la sesión."
-        )
-        return {
-            "response": error_message,
-            "tool_calls": [],
-        }
-
-
-# ---------------------------------------------------------------------------
-# Funciones auxiliares de gestión del historial
-# ---------------------------------------------------------------------------
-
-def clear_conversation(thread_id: str = "default") -> None:
-    """
-    Limpia el historial de conversación de un thread específico.
-    Útil al iniciar una nueva partida o reiniciar la sesión.
-
-    Args:
-        thread_id: ID del hilo de conversación a limpiar
-    """
-    if thread_id in _conversation_history:
-        del _conversation_history[thread_id]
-
-    # Reiniciar el thread con solo el prompt del sistema
-    _conversation_history[thread_id] = [
-        SystemMessage(content=DM_SYSTEM_PROMPT)
-    ]
-
-
-def get_conversation_length(thread_id: str = "default") -> int:
-    """
-    Retorna la cantidad de mensajes en el historial de un thread.
-
-    Args:
-        thread_id: ID del hilo de conversación
-
-    Returns:
-        int con la cantidad de mensajes (incluyendo el SystemMessage inicial)
-    """
-    if thread_id not in _conversation_history:
-        return 0
-    return len(_conversation_history[thread_id])
-
-
-def reset_agent() -> None:
-    """
-    Reinicia completamente el agente, limpiando el singleton y todos los historiales.
-    Útil para testing o cuando se cambia la configuración de la API key.
-    """
-    global _agent
-    _agent = None
-    _conversation_history.clear()
-
-
-#Agregados Hernan
 def _estado_jugador() -> str:
-    """Línea con el HP real del jugador para que el modelo no lo invente (agregado)."""
+    """Línea con el HP real del jugador para que el modelo no lo invente."""
     try:
         from game_engine.state_manager import get_state_manager
         j = get_state_manager().get_state().get("jugador", {})
@@ -307,3 +124,146 @@ def _estado_jugador() -> str:
         return f"[ESTADO ACTUAL DEL JUGADOR: HP {hp}/{hp_max}]\n"
     except Exception:
         return ""
+
+
+def _split_blocks(content) -> tuple[str, str]:
+    """
+    Separa el `content` crudo de un chunk en (razonamiento, texto).
+
+    Se lee el contenido crudo y no `chunk.content_blocks`: esa vista estandarizada
+    puede descartar silenciosamente bloques de razonamiento según el proveedor.
+    `content` es un str (solo texto) o una lista de bloques: str, {"type": "text"}
+    o {"type": "thinking"|"reasoning"} (la clave del texto varía con el proveedor).
+    """
+    if isinstance(content, str):
+        return "", content
+    reasoning, text = [], []
+    for block in content or []:
+        if isinstance(block, str):
+            text.append(block)
+        elif isinstance(block, dict):
+            kind = block.get("type")
+            if kind in ("reasoning", "thinking"):
+                reasoning.append(block.get("reasoning") or block.get("thinking") or "")
+            elif kind == "text":
+                text.append(block.get("text", "") or "")
+    return "".join(reasoning), "".join(text)
+
+
+# ---------------------------------------------------------------------------
+# Ejecución con streaming
+# ---------------------------------------------------------------------------
+
+def stream_agent(user_message: str, thread_id: str = "default") -> Iterator[dict]:
+    """
+    Ejecuta el agente y emite eventos a medida que ocurren.
+
+    Eventos (dict con clave "type"):
+      - "reasoning":   {"text"}                   fragmento de razonamiento del modelo
+      - "text":        {"text"}                   fragmento de la respuesta
+      - "tool_call":   {"id", "name", "args"}     el agente decidió invocar una tool
+      - "tool_result": {"id", "name", "output"}   resultado de esa tool
+      - "error":       {"message"}                fallo; el flujo termina sin lanzar excepción
+
+    Args:
+        user_message: lo que hace/dice el jugador
+        thread_id: hilo de conversación (el checkpointer guarda la memoria por hilo)
+    """
+    try:
+        agent = get_agent()
+        config = {
+            "configurable": {"thread_id": thread_id},
+            "recursion_limit": RECURSION_LIMIT,
+        }
+        # El HP real se inyecta en CADA turno para que el modelo nunca vea un valor viejo
+        entrada = {"messages": [{"role": "user", "content": _estado_jugador() + user_message}]}
+
+        for mode, payload in agent.stream(
+            entrada, config=config, stream_mode=["updates", "messages"]
+        ):
+            if mode == "messages":
+                chunk, _meta = payload
+                # En este modo también llegan ToolMessages: solo nos interesan los chunks del LLM
+                if not isinstance(chunk, AIMessageChunk):
+                    continue
+                reasoning, text = _split_blocks(chunk.content)
+                if reasoning:
+                    yield {"type": "reasoning", "text": reasoning}
+                if text:
+                    yield {"type": "text", "text": text}
+
+            elif mode == "updates":
+                # Aquí los mensajes llegan completos (tool calls con argumentos enteros)
+                for _node, update in payload.items():
+                    for msg in (update or {}).get("messages", []):
+                        if isinstance(msg, AIMessage):
+                            for tc in msg.tool_calls:
+                                yield {
+                                    "type": "tool_call",
+                                    "id": tc["id"],
+                                    "name": tc["name"],
+                                    "args": tc["args"],
+                                }
+                        elif isinstance(msg, ToolMessage):
+                            yield {
+                                "type": "tool_result",
+                                "id": msg.tool_call_id,
+                                "name": msg.name,
+                                "output": str(msg.content),
+                            }
+
+    except GraphRecursionError:
+        yield {
+            "type": "error",
+            "message": "El Dungeon Master se enredó en demasiados pasos internos. "
+                       "Intenta reformular tu acción.",
+        }
+    except Exception as e:
+        yield {"type": "error", "message": f"Error en el Dungeon Master AI: {e}"}
+
+
+def run_agent(user_message: str, thread_id: str = "default") -> dict:
+    """
+    Versión bloqueante: consume stream_agent() y devuelve el resultado completo.
+
+    Returns:
+        {"response": str, "tool_calls": [{"name", "input", "output"}, ...]}
+        Nunca lanza excepciones; los errores se devuelven en "response".
+    """
+    texto, tool_calls, pendientes = [], [], {}
+    for ev in stream_agent(user_message, thread_id):
+        if ev["type"] == "text":
+            texto.append(ev["text"])
+        elif ev["type"] == "tool_call":
+            tc = {"name": ev["name"], "input": ev["args"], "output": ""}
+            pendientes[ev["id"]] = tc
+            tool_calls.append(tc)
+        elif ev["type"] == "tool_result" and ev["id"] in pendientes:
+            pendientes[ev["id"]]["output"] = ev["output"]
+        elif ev["type"] == "error":
+            return {"response": f"❌ {ev['message']}", "tool_calls": tool_calls}
+    return {"response": "".join(texto), "tool_calls": tool_calls}
+
+
+# ---------------------------------------------------------------------------
+# Gestión de hilos
+# ---------------------------------------------------------------------------
+
+def clear_conversation(thread_id: str = "default") -> None:
+    """Borra la memoria de un hilo (nueva partida)."""
+    _checkpointer.delete_thread(thread_id)
+
+
+def get_conversation_length(thread_id: str = "default") -> int:
+    """Cantidad de mensajes guardados por el checkpointer para un hilo."""
+    try:
+        estado = get_agent().get_state({"configurable": {"thread_id": thread_id}})
+        return len(estado.values.get("messages", []))
+    except Exception:
+        return 0
+
+
+def reset_agent() -> None:
+    """Descarta el agente singleton (p. ej. si cambió la API key)."""
+    global _agent
+    _agent = None
