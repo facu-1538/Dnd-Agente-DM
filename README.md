@@ -1,227 +1,215 @@
-# 🐉 D&D AI Dungeon Master
+# Dungeon Master AI: agente de D&D 5e con LangChain
 
-> **Trabajo Integrador Universitario**  
-> Sistema de Dungeon Master automatizado con Inteligencia Artificial para Dungeons & Dragons 5ª Edición
+Trabajo Integrador de **Modelos de Lenguaje** (UTN FRM, 2026).
 
----
+Un Dungeon Master virtual construido con un **agente de LangChain** (`create_agent`). Narra la aventura, consulta el reglamento oficial (SRD 5.1) con **RAG**, resuelve el azar con tiradas de dados reales, mantiene la vida del personaje en un estado persistente y dibuja el **mapa del dungeon**, que se puede descargar como PNG. La interfaz web muestra **en vivo** qué hace el agente: su razonamiento, cada herramienta con sus argumentos y el resultado, y la respuesta final.
 
-## 📖 Descripción del Proyecto
+## Qué resuelve
 
-Este proyecto implementa un **Dungeon Master virtual** basado en inteligencia artificial capaz de narrar aventuras de D&D 5e, aplicar reglas del juego, gestionar el estado de los personajes y los encuentros, y responder con coherencia narrativa a las acciones de los jugadores.
+**Dominio:** dirigir una partida de rol de Dungeons & Dragons 5ª edición, con reglas reales y estado de juego consistente.
 
-El sistema combina un **agente LangGraph** con un pipeline **RAG (Retrieval-Augmented Generation)** sobre el System Reference Document (SRD) de D&D 5e, utilizando el modelo **Gemini** de Google como motor de lenguaje. La interfaz es una aplicación web construida con **Streamlit**.
+**Usuario:** un jugador (o un grupo) que quiere jugar sin un DM humano y sin que el modelo "invente" las reglas, las tiradas o la vida del personaje.
 
----
+**Tarea de ejemplo (varios pasos, no resoluble con una sola llamada ni una sola tool):**
 
-## 🏗️ Arquitectura del Sistema
+> *"Entro a la armería."*
+>
+> 1. El agente **consulta el reglamento** (RAG) para obtener las estadísticas del enemigo que aparece.
+> 2. **Tira los dados** del ataque contra la CA del jugador (y el daño si impacta).
+> 3. **Aplica el daño** al estado real del personaje (la barra de vida de la UI baja).
+> 4. **Revela la sala en el mapa** y lo vuelve a renderizar.
+> 5. Narra el resultado y deja el mapa listo para **descargar** (producto final tangible).
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                        USUARIO / JUGADOR                        │
-└──────────────────────────┬──────────────────────────────────────┘
-                           │  Entrada de texto (acción del jugador)
-                           ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                   INTERFAZ STREAMLIT (app.py)                   │
-│   - Chat interactivo                                            │
-│   - Panel lateral: ficha del personaje, estado del juego        │
-│   - Historial de sesión                                         │
-└──────────────────────────┬──────────────────────────────────────┘
-                           │
-                           ▼
-┌─────────────────────────────────────────────────────────────────┐
-│               AGENTE LANGGRAPH (agent/dm_agent.py)              │
-│                                                                 │
-│   ┌─────────────┐    ┌──────────────┐    ┌──────────────────┐  │
-│   │   Nodo DM   │───▶│ Nodo Routing │───▶│  Nodo de Acción  │  │
-│   │  (Gemini)   │    │  (decisión)  │    │  (tool calling)  │  │
-│   └─────────────┘    └──────────────┘    └────────┬─────────┘  │
-│          ▲                                         │            │
-│          └─────────────────────────────────────────┘            │
-│                       Bucle ReAct                               │
-└─────────────────────────────────────────────────────────────────┘
-                           │
-              ┌────────────┼────────────┐
-              ▼            ▼            ▼
-┌─────────────────┐ ┌──────────────┐ ┌──────────────────────────┐
-│   RAG TOOL      │ │  DICE TOOL   │ │    GAME ENGINE TOOL       │
-│ (rag/retriever) │ │(game_engine/ │ │  (game_engine/combat,     │
-│                 │ │  dice.py)    │ │   character, encounter)   │
-│ - Busca reglas  │ │              │ │                           │
-│   en el SRD     │ │ - Simula     │ │ - Gestiona HP, stats      │
-│ - Hechizos      │ │   tiradas    │ │ - Combate por turnos      │
-│ - Monstruos     │ │   de dados   │ │ - Chequeos de habilidad   │
-│ - Clases/razas  │ │              │ │ - Estado del mundo        │
-└────────┬────────┘ └──────────────┘ └──────────────────────────┘
-         │
-         ▼
-┌─────────────────────────────────────────────────────────────────┐
-│              VECTOR STORE FAISS (rag/vector_store.py)           │
-│   - Embeddings: sentence-transformers                           │
-│   - Índice FAISS local                                          │
-│   - Fuente: SRD 5e en texto plano                               │
-└─────────────────────────────────────────────────────────────────┘
+## Arquitectura
+
+```mermaid
+flowchart LR
+    U[Jugador] --> UI["Streamlit (app.py)<br/>chat + sidebar + mapa"]
+    UI -->|"stream_agent()"| A
+
+    subgraph A["Agente: create_agent (LangChain / LangGraph)"]
+        M["Modelo<br/>Gemini 3.1 Flash-Lite"] <-->|"tool calls"| T["Herramientas"]
+        CP[("InMemorySaver<br/>memoria por thread_id")] --- M
+    end
+
+    T --> R["query_rules_rag"] --> V[("FAISS<br/>SRD 5.1")]
+    T --> D["execute_dice_roll"]
+    T --> H["damage_player / heal_player"] --> S[("game_state.json")]
+    T --> P["switch_and_render_map"] --> MAP[("mapa PNG")]
+
+    A -.->|"eventos: razonamiento,<br/>tool_call, tool_result, texto"| UI
 ```
 
----
+### Componentes y por qué están
 
-## 🛠️ Stack Tecnológico
+| Componente | Qué es | Por qué |
+|---|---|---|
+| **Agente** | `create_agent` de LangChain (sin Deep Agents) | Resuelve el bucle modelo ↔ herramientas con tool calling. |
+| **Modelo** | `gemini-3.1-flash-lite` (Google Gemini) | Soporta tool calling (verificado), tiene tier gratuito y devuelve resúmenes de razonamiento. |
+| **Memoria de corto plazo** | `InMemorySaver` (checkpointer de LangGraph), por `thread_id` | Permite turnos que dependen de los anteriores ("¿cuánto salió en esa tirada?"). Se pierde al reiniciar el proceso. |
+| **RAG** | FAISS + embeddings `gemini-embedding-2` sobre 6 documentos del SRD | El modelo no memoriza las reglas con fidelidad; el RAG aporta hechizos, monstruos y reglas exactas. |
+| **UI** | Streamlit | Permite chat con markdown y mostrar el flujo del agente en streaming (ver §3.5 de la consigna). |
+| **Middleware** | **Ninguno** | Los reintentos ante errores 429/5xx los resuelve el cliente de Gemini (`max_retries=6`, backoff exponencial de 1 s a 60 s) y el tope de pasos se fija con `recursion_limit`. No hacía falta código ni middleware adicional. |
 
-| Componente | Tecnología |
-|---|---|
-| **LLM** | Google Gemini (via `langchain-google-genai`) |
-| **Orquestación del agente** | LangGraph |
-| **Framework RAG** | LangChain + FAISS |
-| **Embeddings** | `sentence-transformers` (local, sin costo) |
-| **Interfaz de usuario** | Streamlit |
-| **Almacenamiento vectorial** | FAISS (local) |
-| **Gestión de entorno** | python-dotenv |
+### Herramientas
 
----
+| Tool | Tipo | Qué hace | Entradas → Salida |
+|---|---|---|---|
+| `query_rules_rag` | **Externa** (base vectorial) | Busca en el SRD hechizos, monstruos, condiciones, armas, armaduras y reglas. | `query: str`, `category: str` → fragmentos con su categoría y título |
+| `execute_dice_roll` | **Propia** | Ejecuta tiradas reales (`1d20+5`, `2d6`, `4d6kh3`) y compara con CA/CD. | `dice_formula`, `reason`, `target_dc_or_ac` → JSON con dados, total y éxito |
+| `damage_player` / `heal_player` | **Propias** | Modifican la vida del jugador en el estado real (`storage/game_state.json`). | `amount: int`, `source: str` → JSON con HP anterior y nuevo |
+| `switch_and_render_map` | **Propia** + externa (archivo) | Revela salas (validadas contra el layout) y renderiza el mapa con niebla de guerra. | `revealed_nodes: list[str]` → texto con salas nuevas y PNG en `storage/maps/` |
 
-## ⚙️ Instalación Paso a Paso
+Todas manejan sus errores sin cortar el flujo (devuelven un mensaje/JSON de error que el agente puede leer).
 
-### Prerrequisitos
-- Python 3.10 o superior
-- Una API key de Google Gemini (obtener en [Google AI Studio](https://aistudio.google.com/))
+## Estructura del repositorio
 
-### 1. Clonar o descargar el proyecto
+```
+app.py                  # UI Streamlit: chat, streaming, sidebar y mapa
+agent/
+  core.py               # create_agent, checkpointer, stream_agent() / run_agent()
+  tools.py              # las 5 herramientas
+  prompt.py             # system prompt del DM + reglas
+game_engine/
+  state_manager.py      # estado de la partida (vida, oro, salas, enemigos)
+  map_renderer.py       # layout del dungeon y mapa con niebla (Pillow)
+rag/
+  data/*.txt            # corpus (6 documentos del SRD)
+  retriever.py          # búsqueda en FAISS
+setup_rag.py            # ingesta + chunking + embeddings + índice
+storage/vector_db/      # índice FAISS ya construido (incluido en el repo)
+.streamlit/config.toml  # tema de la UI
+ui/style.css            # tipografía de lectura de la narración
+```
+
+## Instalación y ejecución
+
+**Requisitos:** Python 3.11 o superior (es el mínimo que exigen las dependencias; el proyecto se probó con Python 3.14 en Windows 11) y una API key de Google Gemini.
+
+### 1. Clonar y crear el entorno virtual
 
 ```bash
-# Si usás git:
-git clone <url-del-repositorio>
-cd dnd-ai-dm
-
-# O simplemente navegá a la carpeta del proyecto
-cd C:\ruta\al\proyecto\dnd-ai-dm
-```
-
-### 2. Crear y activar el entorno virtual
-
-```bash
-# Crear el entorno virtual
+git clone https://github.com/facu-1538/Dnd-Agente-DM.git
+cd Dnd-Agente-DM
 python -m venv venv
+```
 
-# Activar en Windows (PowerShell)
+Activarlo:
+
+```bash
+# Windows PowerShell
 .\venv\Scripts\Activate.ps1
-
-# Activar en Windows (CMD)
+# Windows CMD
 venv\Scripts\activate.bat
-
-# Activar en Linux/macOS
+# Linux / macOS
 source venv/bin/activate
 ```
 
-### 3. Instalar dependencias
+### 2. Instalar dependencias
 
 ```bash
 pip install -r requirements.txt
 ```
 
-> ⚠️ La instalación de `faiss-cpu` y `sentence-transformers` puede tardar varios minutos ya que son bibliotecas pesadas.
+### 3. Configurar la API key
 
-### 4. Configurar la API key
-
-Editá el archivo `.env` en la raíz del proyecto:
-
-```
-GEMINI_API_KEY=tu_clave_real_aqui
-```
-
-> **No uses comillas** alrededor de la clave. No subas este archivo a ningún repositorio público.
-
-### 5. Construir el índice RAG
-
-Este paso descarga los textos del SRD, genera los embeddings y construye el índice FAISS local. Solo necesitás hacerlo una vez:
+Obtené una clave gratis en <https://aistudio.google.com/app/apikey>, copiá el archivo de ejemplo y editalo:
 
 ```bash
-python setup_rag.py
+# Windows
+copy .env.example .env
+# Linux / macOS
+cp .env.example .env
 ```
 
-El script creará la carpeta `rag/vectorstore/` con el índice. Puede tardar entre 2 y 10 minutos según tu hardware.
+En `.env` dejá la clave **sin comillas**:
 
-### 6. Ejecutar la aplicación
+```
+GEMINI_API_KEY=tu_clave_real
+```
+
+`.env` está en `.gitignore`: no lo subas nunca. Variables opcionales (se agregan al mismo `.env`):
+
+| Variable | Por defecto | Para qué |
+|---|---|---|
+| `GEMINI_MODEL` | `gemini-3.1-flash-lite` | Cambiar el modelo del agente (debe soportar tool calling). |
+| `DM_INCLUDE_THOUGHTS` | `1` | Con `0` no se pide el razonamiento al modelo. |
+
+### 4. Ejecutar
 
 ```bash
 streamlit run app.py
 ```
 
-La aplicación se abrirá automáticamente en tu navegador en `http://localhost:8501`.
+Se abre en <http://localhost:8501>. El índice vectorial ya viene en el repositorio, así que **no hace falta ejecutar `setup_rag.py`** para jugar.
 
----
+> Los tiers gratuitos tienen límite de peticiones. El primer turno puede tardar (carga del índice). Si ves un error 429, esperá un minuto.
 
-## 📁 Descripción de Módulos
+## Cómo demostrar cada requisito
 
-### `app.py` — Interfaz principal
-Punto de entrada de la aplicación. Define la UI de Streamlit: área de chat, panel lateral con la ficha del personaje, controles de sesión y visualización del historial de conversación.
+| Requisito | Qué hacer en la UI |
+|---|---|
+| **Tarea de varios pasos** | Escribí `Un goblin me ataca en la armería.` y mirá la secuencia de herramientas. |
+| **Visibilidad de tools (streaming)** | Cada herramienta aparece en la línea de tiempo apenas se invoca, con sus argumentos; al terminar muestra el resumen del resultado. Al abrirla se ve el resultado completo. |
+| **Razonamiento** | Bloque plegable "Razonamiento", diferenciado de la respuesta. Se muestra en vivo mientras el modelo piensa. |
+| **Memoria** | Después de una tirada preguntá `¿Cuánto salió en esa tirada?`: responde sin que se lo repitas. |
+| **RAG** | Preguntá `¿Qué hace el hechizo Bola de Fuego?`: aparece la consulta de reglas y los fragmentos recuperados. |
+| **Producto tangible** | Tras explorar salas, el botón **Descargar mapa** (en el chat y en la sidebar) exporta el PNG. |
 
-### `agent/` — Agente LangGraph
-- **`dm_agent.py`**: Define el grafo LangGraph del DM. Implementa el bucle ReAct (Razonar → Actuar → Observar) con nodos para la generación de respuesta, el enrutamiento a herramientas y la síntesis final.
-- **`tools.py`**: Registra las herramientas disponibles para el agente: búsqueda RAG, tirada de dados, consulta del estado del juego, etc.
-- **`prompts.py`**: Contiene los system prompts del DM que definen su personalidad, restricciones narrativas y formato de respuesta.
+## RAG: corpus e ingesta (reproducible)
 
-### `rag/` — Retrieval-Augmented Generation
-- **`retriever.py`**: Implementa la herramienta de búsqueda semántica sobre el SRD. Dada una consulta (p. ej. "¿qué hace el hechizo Bola de Fuego?"), recupera los fragmentos más relevantes del índice FAISS.
-- **`vector_store.py`**: Lógica para construir, guardar y cargar el índice vectorial FAISS.
-- **`document_loader.py`**: Carga y divide los documentos del SRD en chunks apropiados para el indexado.
+**Corpus:** 6 documentos de texto en `rag/data/`: `spells`, `monsters`, `conditions`, `weapons`, `armor` y `rules`. Provienen del SRD 5.1 de Wizards of the Coast a través de la API pública [Open5e](https://open5e.com/).
 
-### `game_engine/` — Motor del Juego
-- **`state.py`**: Define el estado global de la partida: personajes, HP, posición, inventario, encuentros activos.
-- **`character.py`**: Gestión de personajes del jugador (stats, habilidades, equipo, niveles).
-- **`dice.py`**: Simulador de dados (d4, d6, d8, d10, d12, d20, d100) con soporte para modificadores y ventaja/desventaja.
-- **`combat.py`**: Motor de combate por turnos: iniciativa, ataques, daño, condiciones de estado.
-- **`encounter.py`**: Generación y gestión de encuentros con monstruos del SRD.
+**Pipeline** (`setup_rag.py`):
 
-### `setup_rag.py` — Script de configuración
-Script de utilidad que descarga el texto del SRD, lo procesa, genera embeddings con `sentence-transformers` y construye el índice FAISS local. Debe ejecutarse una vez antes del primer uso.
+1. **Ingesta:** descarga cada categoría de la API Open5e y la guarda como Markdown en `rag/data/*.txt`. Si esos archivos ya existen, se omite la descarga.
+2. **Chunking:** primero por encabezados (`##`, una entrada por hechizo o monstruo) y luego `RecursiveCharacterTextSplitter` con `chunk_size=2000` y `chunk_overlap=200`.
+3. **Embeddings:** `gemini-embedding-2` por lotes de 50, con pausas para respetar el límite por minuto.
+4. **Índice:** FAISS local en `storage/vector_db/`. Cada fragmento guarda su `categoria` (= archivo de origen) y su `titulo`.
 
----
+**Tamaño del contexto:** la tool devuelve como máximo 4 fragmentos de ≤2000 caracteres (~8000 caracteres), para no saturar el contexto del agente.
 
-## 🐛 Posibles Problemas y Soluciones
+**Reconstruir desde cero:**
 
-### Error: `GEMINI_API_KEY not found`
-**Causa**: El archivo `.env` no existe, está vacío o la variable no está configurada.  
-**Solución**: Verificá que el archivo `.env` está en la raíz del proyecto y contiene `GEMINI_API_KEY=tu_clave`.
+```bash
+# Volver a descargar el corpus desde Open5e e indexar los fragmentos que falten
+python setup_rag.py --force
+```
 
-### Error al instalar `faiss-cpu`
-**Causa**: Incompatibilidad de versiones de Python o falta de dependencias de compilación en Windows.  
-**Solución**: Intentá con `pip install faiss-cpu --only-binary :all:` o usá Python 3.10/3.11.
+Para regenerar el índice completo, borrá `storage/vector_db/` y ejecutá `python setup_rag.py`. El script indexa solo los fragmentos que todavía no están (los identifica por un hash de su contenido). El proceso tarda varios minutos y puede agotar la cuota diaria de embeddings: guarda el progreso y se reanuda al volver a ejecutarlo.
 
-### Error: `No module named 'sentence_transformers'`
-**Causa**: El entorno virtual no está activado o la instalación falló.  
-**Solución**: Activá el venv y reinstalá: `pip install sentence-transformers`.
+## Visibilidad del razonamiento
 
-### El RAG no encuentra resultados relevantes
-**Causa**: El índice FAISS no fue construido o está corrupto.  
-**Solución**: Eliminá la carpeta `rag/vectorstore/` y volvé a ejecutar `python setup_rag.py`.
+`gemini-3.1-flash-lite` solo devuelve razonamiento si se activa el pensamiento dinámico (`thinking_budget=-1`), que ya viene configurado en `agent/core.py`. Gemini entrega un **resumen** del razonamiento, **en inglés**, no la cadena de pensamiento completa. En turnos simples puede no emitir ningún bloque; en ese caso la UI no muestra nada.
 
-### Streamlit no abre el navegador automáticamente
-**Causa**: Configuración del sistema operativo.  
-**Solución**: Abrí manualmente `http://localhost:8501` en tu navegador.
+## Limitaciones conocidas
 
-### Respuestas lentas del agente
-**Causa**: El modelo Gemini tiene latencia de red o se están recuperando muchos chunks del RAG.  
-**Solución**: Reducí el parámetro `k` (número de chunks recuperados) en `rag/retriever.py`. Verificá tu conexión a internet.
+- **Memoria en proceso:** el `InMemorySaver` se pierde al reiniciar Streamlit. Para persistirla bastaría cambiarlo por un checkpointer de SQLite.
+- **Dungeon fijo:** el mapa tiene 8 salas definidas en `game_engine/map_renderer.py`; el agente solo decide cuáles revelar.
+- **Ficha del personaje:** la creación de personaje se conversa con el DM, pero no se guarda en la ficha de la sidebar (nombre, clase y nivel son los del estado por defecto).
+- **Cuota gratuita:** los límites de Gemini pueden producir errores 429 o latencias altas; los reintentos no ayudan si se agota la cuota diaria.
+- **Idioma del razonamiento:** llega en inglés (resumen del proveedor).
+- **Índice FAISS:** se carga con `allow_dangerous_deserialization=True` (formato pickle). Es seguro porque el índice lo generamos nosotros, pero no cargues índices de terceros.
 
----
+## Problemas frecuentes
 
-## 📚 Referencias
+| Síntoma | Causa y solución |
+|---|---|
+| `GEMINI_API_KEY no configurada` | Falta `.env` o la variable. Copiá `.env.example` y completá la clave. |
+| Error 429 / "quota" | Límite del tier gratuito. Esperá un minuto; si es la cuota diaria, probá más tarde. |
+| El modelo no existe (404) | Cambiá `GEMINI_MODEL` por un modelo disponible para tu cuenta. |
+| Falla al arrancar con el razonamiento | Poné `DM_INCLUDE_THOUGHTS=0` en `.env`. |
+| `Activate.ps1` no se ejecuta | Usá CMD con `activate.bat`, o habilitá scripts en PowerShell. |
+| El RAG no responde | Verificá que exista `storage/vector_db/` o regeneralo con `python setup_rag.py`. |
 
-- [Dungeons & Dragons 5e System Reference Document (SRD)](https://www.dndbeyond.com/srd)
-- [LangChain Documentation](https://python.langchain.com/)
-- [LangGraph Documentation](https://langchain-ai.github.io/langgraph/)
-- [Google Gemini API](https://ai.google.dev/)
-- [Streamlit Documentation](https://docs.streamlit.io/)
+## Referencias
 
----
+- [LangChain: agentes](https://docs.langchain.com/oss/python/langchain/agents)
+- [LangGraph: persistencia (checkpointers)](https://docs.langchain.com/oss/python/langgraph/persistence)
+- [Streamlit](https://docs.streamlit.io/)
+- [Open5e API](https://open5e.com/) y System Reference Document 5.1 (Wizards of the Coast, licencia abierta OGL 1.0a / CC-BY-4.0)
+- [Google AI Studio](https://aistudio.google.com/)
 
-## 👥 Autores
+## Equipo
 
-Trabajo Integrador Universitario — Sistemas de Inteligencia Artificial  
-*Facultad de Ingeniería / Ciencias de la Computación*
-
----
-
-## 📄 Licencia
-
-Este proyecto es de uso académico. El contenido del SRD de D&D 5e está bajo la [Open Game License (OGL) v1.0a](https://www.dndbeyond.com/srd).
+Integrantes: _(completar)_
