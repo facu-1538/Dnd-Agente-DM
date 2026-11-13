@@ -156,3 +156,58 @@
 [data-testid="stSidebarUserContent"] > div { display: flex; flex-direction: column; }
 [data-testid="stSidebarUserContent"] > div > [data-testid="stVerticalBlock"] { flex: 1 1 auto; }
 [data-testid="stSidebarUserContent"] [data-testid="stLayoutWrapper"]:has(> [class*="st-key-ajustes"]) { margin-top: auto; }
+
+/* ---- Mapa del sidebar: todo el mapa es el botón que lo abre en grande ---- */
+[class*="st-key-mapa_click"] { position: relative; border-radius: 10px; overflow: hidden; cursor: zoom-in; }
+[class*="st-key-mapa_click"] [class*="st-key-ampliar_mapa"] { position: absolute; inset: 0; z-index: 2; }
+[class*="st-key-mapa_click"] [class*="st-key-ampliar_mapa"] button { width: 100%; height: 100%; opacity: 0; cursor: zoom-in; }
+[class*="st-key-mapa_click"]::after {
+    content: "Tocá para ampliar"; position: absolute; left: 50%; bottom: 8px; transform: translateX(-50%) translateY(6px);
+    padding: 4px 12px; border-radius: 999px; font-size: .75rem; font-weight: 700; color: #fff; white-space: nowrap;
+    background: rgba(15, 15, 23, .82); opacity: 0; transition: opacity .25s ease, transform .25s ease; pointer-events: none;
+}
+[class*="st-key-mapa_click"]:hover::after { opacity: 1; transform: translateX(-50%) translateY(0); }
+[class*="st-key-mapa_click"] img { transition: transform .35s ease, filter .35s ease; }
+[class*="st-key-mapa_click"]:hover img { transform: scale(1.03); filter: brightness(1.1); }
+
+/* ---- Tarjeta de tirada de dados ---- */
+.dado-card {
+    --c: #b9b6cc; display: flex; align-items: center; gap: 14px; margin: .5rem 0;
+    padding: 10px 14px; border-radius: 14px;
+    background: color-mix(in srgb, var(--c) 9%, #14131c);
+    border: 1px solid color-mix(in srgb, var(--c) 45%, transparent);
+}
+.dado-card.ok { --c: #4fcf8a; }
+.dado-card.fail { --c: #ef5b6c; }
+.dado-card.neutral { --c: #e3a73b; }
+.dado { position: relative; flex: none; width: 64px; height: 64px; }
+.dado .giro { position: absolute; inset: 0; animation: dado-girar 1s cubic-bezier(.2, .8, .3, 1) both; }
+/* El d20 se dibuja con CSS (st.html no deja pasar SVG): hexágono + triángulo central, cada uno con borde */
+.dado .giro i { position: absolute; display: block; }
+.dado .hex { inset: 0; background: var(--c); clip-path: polygon(50% 0, 93% 25%, 93% 75%, 50% 100%, 7% 75%, 7% 25%); }
+.dado .hex2 { inset: 3px; background: color-mix(in srgb, var(--c) 22%, #1b1a26); clip-path: polygon(50% 0, 93% 25%, 93% 75%, 50% 100%, 7% 75%, 7% 25%); }
+.dado .tri { inset: 18% 20% 14% 20%; background: color-mix(in srgb, var(--c) 55%, transparent); clip-path: polygon(50% 0, 100% 86%, 0 86%); }
+.dado .tri2 { inset: calc(18% + 2px) calc(20% + 3px) calc(14% + 2px) calc(20% + 3px); background: color-mix(in srgb, var(--c) 18%, #1b1a26); clip-path: polygon(50% 0, 100% 86%, 0 86%); }
+.dado .n {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    font-size: 1.5rem; font-weight: 800; color: #fff; text-shadow: 0 1px 6px rgba(0, 0, 0, .6);
+    animation: dado-numero .45s ease-out .75s both;
+}
+.dado-info { flex: 1; min-width: 0; }
+.dado-razon { font-weight: 700; color: #f1ead6; }
+.dado-calc { margin-top: 2px; font-size: .82rem; color: #a9a7bd; font-variant-numeric: tabular-nums; }
+.dado-res {
+    flex: none; text-align: right; font-weight: 800; letter-spacing: .08em; color: var(--c);
+    animation: dado-numero .45s ease-out 1s both;
+}
+.dado-especial { display: block; margin-top: 2px; font-size: .7rem; letter-spacing: .06em; color: #f7d77a; }
+@keyframes dado-girar {
+    0% { transform: rotate(-540deg) scale(.3); opacity: 0; }
+    65% { transform: rotate(18deg) scale(1.12); opacity: 1; }
+    100% { transform: rotate(0) scale(1); opacity: 1; }
+}
+@keyframes dado-numero { 0% { opacity: 0; transform: scale(.3); } 100% { opacity: 1; transform: scale(1); } }
+@media (prefers-reduced-motion: reduce) { .dado .giro, .dado .n, .dado-res { animation: none; } }
+[class*="st-key-mapa_click"] [class*="st-key-ampliar_mapa"],
+[class*="st-key-mapa_click"] [class*="st-key-ampliar_mapa"] [data-testid="stButton"],
+[class*="st-key-mapa_click"] [class*="st-key-ampliar_mapa"] button { width: 100% !important; height: 100% !important; margin: 0; }

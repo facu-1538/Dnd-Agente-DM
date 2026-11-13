@@ -311,11 +311,58 @@ def mostrar_resultado(registro: dict):
         st.code(texto, language=None, wrap_lines=True)
 
 
+def html_dado(registro: dict) -> str:
+    """
+    Tarjeta de una tirada: un d20 que gira, el número grande y, si había dificultad, el veredicto.
+    Devuelve "" si el registro no es una tirada válida.
+    """
+    datos = _json(registro.get("output", "")) if registro.get("name") == "execute_dice_roll" else None
+    if not datos or "total" not in datos:
+        return ""
+    total, mod = datos["total"], datos.get("modifier", 0)
+    tiradas = datos.get("rolls") or []
+    objetivo, exito = datos.get("target"), datos.get("success")
+    clase = "neutral" if objetivo is None or exito is None else ("ok" if exito else "fail")
+    etiqueta = {"ok": "ÉXITO", "fail": "FALLO"}.get(clase, "")
+    # Natural 20 / natural 1: solo cuando es una tirada de un único d20
+    especial = ""
+    if len(tiradas) == 1 and "d20" in str(datos.get("formula", "")).lower():
+        if tiradas[0] == 20:
+            especial = '<span class="dado-especial">¡CRÍTICO!</span>'
+        elif tiradas[0] == 1:
+            especial = '<span class="dado-especial">¡PIFIA!</span>'
+    calculo = " + ".join(str(t) for t in tiradas) if tiradas else str(total)
+    if mod:
+        calculo += f" {'+' if mod > 0 else '−'} {abs(mod)}"
+    calculo += f" = {total}"
+    contra = f" · contra {html.escape(str(objetivo))}" if objetivo is not None else ""
+    razon = html.escape(str(datos.get("reason") or "Tirada de dados"))
+    if etiqueta or especial:
+        veredicto = f'<div class="dado-res">{etiqueta}{especial}</div>'
+    else:
+        veredicto = ""
+    return (
+        f'<div class="dado-card {clase}"><div class="dado">'
+        '<div class="giro"><i class="hex"></i><i class="hex2"></i><i class="tri"></i><i class="tri2"></i></div>'
+        f'<span class="n">{html.escape(str(total))}</span></div>'
+        f'<div class="dado-info"><div class="dado-razon">{razon}</div>'
+        f'<div class="dado-calc">{html.escape(str(datos.get("formula", "")))} · {calculo}{contra}</div></div>'
+        f'{veredicto}</div>'
+    )
+
+
+def mostrar_dado(registro: dict):
+    tarjeta = html_dado(registro)
+    if tarjeta:
+        st.html(tarjeta)
+
+
 def paso_estatico(registro: dict, abierto: bool):
     """Paso de herramienta ya terminado (historial)."""
     with st.status(etiqueta_tool(registro), type="step", state=estado_tool(registro), expanded=abierto):
         mostrar_args(registro.get("input", {}))
         mostrar_resultado(registro)
+    mostrar_dado(registro)
 
 
 def renderizar_razonamiento(texto: str, key: str, abierto: bool):
@@ -561,16 +608,21 @@ with st.sidebar:
         # --- Mapa del dungeon (producto tangible de la partida) ---
         st.markdown("#### :green[:material/map:] Mapa")
         if ruta_mapa().exists():
-            st.image(str(ruta_mapa()), width="stretch", alt="Mapa del dungeon con las salas exploradas")
-            col_ampliar, col_descargar = st.columns(2)
-            with col_ampliar:
-                if st.button("Ampliar", icon=":material/zoom_in:", key="ampliar_mapa", width="stretch"):
+            # El mapa entero es el botón: un clic lo abre en grande (con zoom y descarga adentro)
+            with st.container(key="mapa_click"):
+                st.image(str(ruta_mapa()), width="stretch", alt="Mapa del dungeon con las salas exploradas")
+                if st.button(" ", key="ampliar_mapa"):
                     ver_mapa_grande()
-            with col_descargar:
-                boton_descarga_mapa("descargar_mapa", etiqueta="Descargar", ancho="stretch")
         else:
             with st.container(border=True):
                 st.caption("El mapa se revelará al explorar el dungeon.")
+
+        # Pasos abiertos: despliega el razonamiento y cada herramienta (útil para la demo y la revisión)
+        pasos_abiertos = st.toggle(
+            "Dejar los pasos abiertos", value=False, key="pasos_abiertos",
+            help="Mientras el agente responde, el razonamiento y cada herramienta se ven desplegados. "
+                 "Al terminar se cierran (podés abrirlos con un clic); con esto activo quedan abiertos.",
+        )
 
     # --- Pestaña "Historial": partidas guardadas y ajustes ---
     with tab_historial:
@@ -594,15 +646,8 @@ with st.sidebar:
                         confirmar_borrado(p["id"], titulo)
                 st.caption(detalle_partida(p))
 
-    # Ajustes: fuera de las pestañas para poder anclarlos al fondo de la barra (el CSS los oculta en "Partida")
+    # Estado del sistema: fuera de las pestañas para anclarlo al fondo de la barra (el CSS lo oculta en "Partida")
     with st.container(key="ajustes"):
-        st.markdown("**Ajustes**")
-        # Pasos abiertos: despliega el razonamiento y cada herramienta (útil para la demo y la revisión)
-        pasos_abiertos = st.toggle(
-            "Dejar los pasos abiertos", value=False, key="pasos_abiertos",
-            help="Mientras el agente responde, el razonamiento y cada herramienta se ven desplegados. "
-                 "Al terminar se cierran (podés abrirlos con un clic); con esto activo quedan abiertos.",
-        )
         st.caption(
             f"RAG {'activo' if _vectorstore_available else 'sin inicializar'} · "
             f"agente {'ok' if _agent_available else 'con error'} · "
@@ -836,6 +881,8 @@ if prompt := st.chat_input("¿Qué hace tu personaje?", submit_mode="disable"):
                     with estado:
                         mostrar_resultado(registro)
                     estado.update(label=etiqueta_tool(registro), state=estado_tool(registro))
+                    with tools_box:
+                        mostrar_dado(registro)
 
             elif tipo == "text":
                 texto += ev["text"]
