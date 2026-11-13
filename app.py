@@ -449,6 +449,13 @@ def _clave(texto: str) -> str:
     return unicodedata.normalize("NFD", str(texto).lower()).encode("ascii", "ignore").decode().strip()
 
 
+def html_seccion(icono: str, titulo: str, color: str, valor: str = "", primera: bool = False) -> str:
+    """Título de sección de la barra lateral (mismo tamaño y estilo para todas) con su valor debajo."""
+    v = f'<div class="val">{valor}</div>' if valor else ""
+    return (f'<div class="bloque{" primero" if primera else ""}"><div class="sec" style="--c:{color}">'
+            f'<span class="ms">{icono}</span>{html.escape(titulo)}</div>{v}</div>')
+
+
 def html_ficha(info: dict) -> str:
     """Tarjeta del personaje: nombre grande, raza y clase con ícono y color, y el nivel en una insignia."""
     nombre = html.escape(str(info.get("nombre") or "Aventurero"))
@@ -574,28 +581,27 @@ with st.sidebar:
             st.html(html_ficha(info))
 
             with st.container(key="vida"):
-                st.markdown(f":red[:material/favorite:] **Vida** &nbsp; {hp} / {max_hp}")
+                st.html(html_seccion("favorite", "Vida", "#ef5b6c", f"{hp} / {max_hp}"))
                 st.progress(max(0.0, min(1.0, hp / max_hp)))
 
             col_oro, col_xp = st.columns(2)
-            col_oro.markdown(f":orange[:material/paid:] **{info.get('oro', 0)}** oro")
-            col_xp.markdown(f":violet[:material/auto_awesome:] **{info.get('experiencia', 0)}** XP")
+            col_oro.html(html_seccion("paid", "Oro", "#e3a73b", str(info.get("oro", 0))))
+            col_xp.html(html_seccion("auto_awesome", "XP", "#a78bfa", str(info.get("experiencia", 0))))
 
             try:
                 sala = _sm.get_current_room()
-                st.markdown(
-                    f":green[:material/location_on:] **Ubicación** &nbsp; {DUNGEON_LAYOUT.get(sala, {}).get('nombre', sala)}"
-                )
+                st.html(html_seccion("location_on", "Ubicación", "#4fcf8a",
+                                     html.escape(str(DUNGEON_LAYOUT.get(sala, {}).get("nombre", sala)))))
             except Exception:
                 pass
 
-        # Enemigos: solo ocupan lugar si hay combate
+        # Enemigos: una línea si no hay combate; con combate, uno por fila con su barra de vida
         try:
             npcs = _sm.get_active_npcs()
         except Exception:
             npcs = {}
         if npcs:
-            st.markdown("#### :red[:material/skull:] Enemigos")
+            st.html(html_seccion("skull", "Enemigos", "#ef5b6c"))
             for nombre_npc, datos_npc in npcs.items():
                 hp_npc = datos_npc.get("hp", "?")
                 max_hp_npc = datos_npc.get("max_hp", hp_npc)
@@ -603,10 +609,10 @@ with st.sidebar:
                 if isinstance(hp_npc, (int, float)) and isinstance(max_hp_npc, (int, float)) and max_hp_npc > 0:
                     st.progress(max(0.0, min(1.0, hp_npc / max_hp_npc)))
         else:
-            st.caption(":gray[:material/shield:] Sin enemigos en combate")
+            st.html(html_seccion("shield", "Enemigos", "#8d8aa3", '<span class="mut">Ninguno en combate</span>'))
 
         # --- Mapa del dungeon (producto tangible de la partida) ---
-        st.markdown("#### :green[:material/map:] Mapa")
+        st.html(html_seccion("map", "Mapa", "#4fcf8a"))
         if ruta_mapa().exists():
             # El mapa entero es el botón: un clic lo abre en grande (con zoom y descarga adentro)
             with st.container(key="mapa_click"):

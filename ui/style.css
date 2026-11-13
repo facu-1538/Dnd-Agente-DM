@@ -135,18 +135,16 @@
     font-size: 1.05rem; line-height: 1; font-feature-settings: 'liga'; -webkit-font-feature-settings: 'liga';
 }
 .nivel {
-    flex: none; width: 36px; height: 36px; border-radius: 50%;
-    display: flex; flex-direction: column; align-items: center; justify-content: center;
-    background: radial-gradient(circle at 30% 25%, #f7d77a, #c8861f 70%);
-    color: #2a1a05; box-shadow: 0 0 0 1.5px #15131d, 0 0 0 3px #e3a73b, 0 0 10px rgba(227, 167, 59, .4);
+    flex: none; width: 44px; border-radius: 10px; overflow: hidden; text-align: center;
+    border: 2px solid #e3a73b; background: #15131d; box-shadow: 0 0 10px rgba(227, 167, 59, .35);
 }
-.nivel b { font-size: .95rem; line-height: 1; }
-.nivel small { font-size: .34rem; font-weight: 800; letter-spacing: .08em; margin-top: 1px; }
+.nivel b { display: block; padding: 3px 0 1px; font-size: 1.45rem; font-weight: 800; line-height: 1.1; color: #2a1a05; background: #f0b94a; }
+.nivel small { display: block; padding: 2px 0 3px; font-size: .62rem; font-weight: 800; letter-spacing: .12em; color: #f0b94a; }
 /* Vida: la barra va pegada a su título */
 [class*="st-key-vida"] { gap: .15rem !important; }
 
 /* Ajustes: anclados al fondo de la barra y solo visibles en la pestaña "Historial" */
-[data-testid="stSidebarUserContent"] { min-height: calc(100vh - 71px); display: flex; flex-direction: column; }
+[data-testid="stSidebarUserContent"] { min-height: calc(100vh - 88px); display: flex; flex-direction: column; }
 [data-testid="stSidebarUserContent"] > * { flex: 1 1 auto; }
 /* Botón de borrar partida: sin el relleno lateral que le aplastaba el ícono */
 [class*="st-key-borrar_"] button { padding: 0 !important; min-width: 0; }
@@ -211,3 +209,15 @@
 [class*="st-key-mapa_click"] [class*="st-key-ampliar_mapa"],
 [class*="st-key-mapa_click"] [class*="st-key-ampliar_mapa"] [data-testid="stButton"],
 [class*="st-key-mapa_click"] [class*="st-key-ampliar_mapa"] button { width: 100% !important; height: 100% !important; margin: 0; }
+
+/* ---- Secciones de la barra lateral: todas con el mismo título (ícono + mayúsculas) ---- */
+.bloque { border-top: .5px solid rgba(232, 224, 204, .14); padding-top: .55rem; margin-top: .15rem; }
+.bloque.primero { border-top: none; padding-top: 0; }
+.sec { display: flex; align-items: center; gap: 6px; font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #8d8aa3; }
+.sec .ms { font-family: 'Material Symbols Rounded', 'Material Symbols Outlined'; font-weight: 400; font-size: 1.05rem; line-height: 1; letter-spacing: 0; text-transform: none; color: var(--c); }
+.val { margin-top: .12rem; font-size: 1.05rem; font-weight: 700; color: #f1ead6; font-variant-numeric: tabular-nums; }
+.val .mut { font-size: .9rem; font-weight: 500; color: #8d8aa3; }
+/* Menos aire entre elementos de la pestaña Partida para que todo entre sin scroll */
+[data-testid="stSidebar"] [data-testid="stTabPanel"] > [data-testid="stVerticalBlock"] { gap: .55rem; }
+/* La miniatura del mapa se recorta un poco (el mapa completo se ve al ampliar) para que la barra no necesite scroll */
+[class*="st-key-mapa_click"] img { height: 120px; width: 100%; object-fit: cover; object-position: center; }
