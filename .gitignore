@@ -21,3 +21,6 @@ storage/maps/
 .idea/
 *.swp
 *.swo
+
+# Estado de partida local (se regenera al jugar)
+storage/game_state.json
