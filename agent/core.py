@@ -6,14 +6,17 @@ Construye el agente con `create_agent` de LangChain (sin Deep Agents) y expone:
     el razonamiento y el texto de la respuesta.
   - run_agent():    versión bloqueante (la usa la bienvenida de app.py).
 
-Memoria de corto plazo: un checkpointer (InMemorySaver) guarda el estado de la
-conversación por `thread_id`. El agente y el checkpointer viven a nivel de módulo;
-Streamlit re-ejecuta app.py en cada interacción pero NO re-importa este módulo,
-por eso la memoria sobrevive entre turnos. Se pierde al reiniciar el proceso.
+Memoria de corto plazo: un checkpointer SQLite (SqliteSaver, storage/memoria.db) guarda el estado
+de la conversación por `thread_id`; la interfaz usa el id de la partida como thread_id, así que
+UN solo id gobierna la memoria del agente, el estado del juego y el historial visible. Como está en
+disco, sobrevive a recargar la página y a reiniciar el proceso. El agente y el checkpointer viven a
+nivel de módulo; Streamlit re-ejecuta app.py en cada interacción pero NO re-importa este módulo.
 """
 
 import os
+import pathlib
 import re
+import sqlite3
 import sys
 from typing import Iterator
 
@@ -21,7 +24,7 @@ from dotenv import load_dotenv
 from langchain.agents import create_agent as lc_create_agent
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.errors import GraphRecursionError
 
 # Cargar variables de entorno desde .env
@@ -79,8 +82,21 @@ _TOOLS = [
     damage_player, heal_player, set_character, manage_enemy, generate_adventure_report,
 ]
 
+# Base de la memoria del agente (configurable por entorno; las pruebas usan una temporal)
+MEMORIA_DB = os.getenv("DM_MEMORIA_DB", "storage/memoria.db")
+
+
+def _crear_checkpointer() -> SqliteSaver:
+    """Checkpointer en disco. check_same_thread=False: LangGraph ejecuta tools en hilos aparte."""
+    ruta = pathlib.Path(MEMORIA_DB)
+    ruta.parent.mkdir(parents=True, exist_ok=True)
+    conexion = sqlite3.connect(str(ruta), check_same_thread=False)
+    conexion.execute("PRAGMA journal_mode=WAL")      # lecturas y escrituras sin bloquearse entre sí
+    return SqliteSaver(conexion)
+
+
 # Checkpointer y agente: singletons de módulo (ver docstring)
-_checkpointer = InMemorySaver()
+_checkpointer = _crear_checkpointer()
 _agent = None
 
 
@@ -260,6 +276,7 @@ def stream_agent(user_message: str, thread_id: str = "default") -> Iterator[dict
     """
     try:
         agent = get_agent()
+        reparar_hilo(thread_id)          # un turno cortado antes (F5, Stop, caída) no debe romper este
         config = {
             "configurable": {"thread_id": thread_id},
             "recursion_limit": RECURSION_LIMIT,
@@ -339,8 +356,47 @@ def run_agent(user_message: str, thread_id: str = "default") -> dict:
 # ---------------------------------------------------------------------------
 
 def clear_conversation(thread_id: str = "default") -> None:
-    """Borra la memoria de un hilo (nueva partida)."""
+    """Borra la memoria de un hilo (al borrar una partida)."""
     _checkpointer.delete_thread(thread_id)
+
+
+def reparar_hilo(thread_id: str) -> int:
+    """
+    Deja coherente un hilo que quedó cortado a mitad de un turno.
+
+    Como la memoria ahora está en disco, un turno interrumpido (recargar la página, el botón Stop de
+    Streamlit, una caída del proceso) ya no se pierde con el hilo: puede haber quedado guardado un
+    mensaje del modelo con llamadas a herramientas SIN su resultado. Gemini rechaza esa secuencia
+    ("function call turn comes right after a user turn..."), y cada turno siguiente fallaría.
+    Se agrega, por cada llamada sin resultado, un resultado que dice que NO se ejecutó.
+
+    Devuelve cuántas llamadas se repararon (0 si el hilo estaba bien o si no se pudo revisar).
+    """
+    try:
+        config = {"configurable": {"thread_id": thread_id}}
+        agente = get_agent()
+        mensajes = agente.get_state(config).values.get("messages", [])
+        respondidas = {m.tool_call_id for m in mensajes if isinstance(m, ToolMessage)}
+        sin_resultado = [tc for m in mensajes if isinstance(m, AIMessage)
+                         for tc in m.tool_calls if tc["id"] not in respondidas]
+        if not sin_resultado:
+            return 0
+        resultados = {"messages": [
+            ToolMessage(content="La ejecución se interrumpió antes de terminar: esta acción NO se aplicó.",
+                        tool_call_id=tc["id"], name=tc["name"])
+            for tc in sin_resultado
+        ]}
+        # El resultado de una herramienta lo produce el nodo "tools". Se prueba primero ese: con una
+        # herramienta pendiente, as_node="model" falla (KeyError). El otro queda de respaldo.
+        for nodo in ("tools", "model"):
+            try:
+                agente.update_state(config, resultados, as_node=nodo)
+                return len(sin_resultado)
+            except Exception:
+                continue
+        return 0
+    except Exception:
+        return 0
 
 
 def get_conversation_length(thread_id: str = "default") -> int:
