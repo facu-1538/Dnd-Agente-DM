@@ -104,6 +104,7 @@ TOOL_UI = {
     "heal_player": (":green[:material/healing:]", "Curación"),
     "set_character": (":orange[:material/badge:]", "Ficha del personaje"),
     "manage_enemy": (":red[:material/skull:]", "Enemigo"),
+    "generate_adventure_report": (":violet[:material/picture_as_pdf:]", "Crónica de la aventura"),
 }
 
 
@@ -178,6 +179,8 @@ def resumen_tool(registro: dict) -> str:
             if datos.get("accion") == "damage":
                 return f"{datos['nombre']}: {datos.get('hp_anterior')} → {datos.get('nuevo_hp')} HP"
             return f"{datos['nombre']} abandona el combate"
+        if nombre == "generate_adventure_report" and datos and "pdf" in datos:
+            return f"PDF listo · {datos.get('paginas')} páginas · {datos.get('kb')} KB"
         if nombre == "switch_and_render_map":
             m = re.search(r"^Ubicación actual: (.+?) \(", salida, flags=re.M)
             if m:
@@ -274,6 +277,29 @@ def renderizar_razonamiento(texto: str, key: str, abierto: bool):
     with st.expander(":violet[:material/psychology:] Razonamiento", expanded=abierto, type="compact"):
         with st.container(key=key):      # key "razon_*": estilo apagado en ui/style.css
             st.markdown(texto)
+
+
+def pdf_generado(tool_calls: list):
+    """Ruta del PDF si en estas tool calls el agente generó la crónica (y el archivo existe)."""
+    for tc in tool_calls:
+        if tc.get("name") == "generate_adventure_report":
+            datos = _json(tc.get("output", ""))
+            if datos and datos.get("pdf") and Path(datos["pdf"]).exists():
+                return Path(datos["pdf"])
+    return None
+
+
+def boton_descarga_pdf(ruta: Path, key: str):
+    """Descarga el PDF que produjo la tool del agente (la UI no genera nada por su cuenta)."""
+    st.download_button(
+        "Descargar crónica (PDF)",
+        data=ruta.read_bytes(),
+        file_name=ruta.name,
+        mime="application/pdf",
+        icon=":material/picture_as_pdf:",
+        type="primary",
+        key=key,
+    )
 
 
 def resumen_turno(n_tools: int, seg: float) -> str:
@@ -516,6 +542,8 @@ for idx, mensaje in enumerate(st.session_state.messages):
                 st.markdown(texto_de(mensaje["content"]))
             if uso_mapa(tool_calls):
                 boton_descarga_mapa(f"dl_mapa_{idx}")
+            if (pdf := pdf_generado(tool_calls)):
+                boton_descarga_pdf(pdf, f"dl_pdf_{idx}")
             if mensaje.get("seg") is not None:
                 st.caption(resumen_turno(len(tool_calls), mensaje["seg"]))
         else:
@@ -608,6 +636,8 @@ if prompt := st.chat_input("¿Qué hace tu personaje?", submit_mode="disable"):
         # Exportar el mapa desde el chat si este turno lo actualizó (misma key que usará el historial)
         if uso_mapa(tool_calls):
             boton_descarga_mapa(f"dl_mapa_{len(st.session_state.messages)}")
+        if (pdf := pdf_generado(tool_calls)):
+            boton_descarga_pdf(pdf, f"dl_pdf_{len(st.session_state.messages)}")
 
         if error:
             st.error(

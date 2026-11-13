@@ -19,3 +19,4 @@ tqdm==4.70.1                      # barra de progreso de la ingesta
 streamlit==1.67.0                 # UI web
 pillow==13.0.0                    # renderizado del mapa del dungeon (PNG)
 python-dotenv==1.2.4              # lectura de .env
+reportlab==5.1.0                  # PDF de la crónica de la aventura

@@ -38,6 +38,7 @@ from agent.tools import (
     heal_player,
     set_character,
     manage_enemy,
+    generate_adventure_report,
 )
 from agent.prompt import DM_SYSTEM_PROMPT
 
@@ -75,7 +76,7 @@ TIMEOUT = float(os.getenv("GEMINI_TIMEOUT", "30"))
 
 _TOOLS = [
     query_rules_rag, execute_dice_roll, switch_and_render_map,
-    damage_player, heal_player, set_character, manage_enemy,
+    damage_player, heal_player, set_character, manage_enemy, generate_adventure_report,
 ]
 
 # Checkpointer y agente: singletons de módulo (ver docstring)

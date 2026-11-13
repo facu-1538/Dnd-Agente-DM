@@ -464,3 +464,38 @@ def manage_enemy(
         return _json({"error": f"Acción desconocida: {action}"})
     except Exception as e:
         return _json({"error": f"No se pudo gestionar el enemigo: {e}"})
+
+
+# ---------------------------------------------------------------------------
+# TOOL 8: Crónica de la aventura en PDF (resultado final tangible)
+# ---------------------------------------------------------------------------
+
+@tool
+def generate_adventure_report(summary: str = "") -> str:
+    """
+    Genera la crónica de la aventura en PDF: portada, ficha del héroe, resumen, mapa con la
+    ruta recorrida, cronología de sucesos, balance de combate y reglas consultadas.
+
+    Úsala cuando el jugador pida la crónica, el informe o el resumen en PDF, o cuando
+    decida terminar la aventura. Todos los datos salen del estado real del juego; tú solo
+    aportas el epílogo narrativo.
+
+    Args:
+        summary: Epílogo de 3 a 6 frases, en español y sin markdown, que cierre la historia
+                 del personaje (qué hizo, qué venció, cómo termina). Puede ir vacío.
+
+    Returns:
+        JSON con la ruta del PDF generado (pdf), su cantidad de páginas y su tamaño en KB.
+    """
+    try:
+        from game_engine.state_manager import get_state_manager
+        from game_engine.map_renderer import get_map_renderer
+        from game_engine.report import build_report
+
+        sm = get_state_manager()
+        # El mapa se vuelve a dibujar para que el informe muestre el estado final
+        mapa = get_map_renderer().render_fog_of_war(discovered_rooms=sm.get_discovered_rooms())
+        r = build_report(summary=summary, ruta_mapa=mapa)
+        return _json({"pdf": r["pdf"], "paginas": r["paginas"], "sucesos": r["eventos"], "kb": r["kb"]})
+    except Exception as e:
+        return _json({"error": f"No se pudo generar el PDF: {e}"})
