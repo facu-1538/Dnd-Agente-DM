@@ -55,7 +55,7 @@ flowchart LR
 
 | Tool | Tipo | Qué hace | Entradas → Salida |
 |---|---|---|---|
-| `query_rules_rag` | **Externa** (base vectorial) | Busca en el SRD hechizos, monstruos, condiciones, armas, armaduras y reglas. | `query: str`, `category: str` → fragmentos con su categoría y título |
+| `query_rules_rag` | **Externa** (base vectorial) | Busca en el SRD hechizos, monstruos, condiciones, armas, armaduras y reglas. | `query: str`, `category: str` (`spells`, `monsters`, `conditions`, `armor`, `weapons`, `rules` o `general`) → fragmentos, cada uno con su documento de origen (`archivo.txt › Título`) y la línea `FUENTES CONSULTADAS` |
 | `execute_dice_roll` | **Propia** | Ejecuta tiradas reales (`1d20+5`, `2d6`, `4d6kh3`) y compara con CA/CD. | `dice_formula`, `reason`, `target_dc_or_ac` → JSON con dados, total y éxito |
 | `damage_player` / `heal_player` | **Propias** | Modifican la vida del jugador en el estado real (`storage/game_state.json`). | `amount: int`, `source: str` → JSON con HP anterior y nuevo |
 | `switch_and_render_map` | **Propia** + externa (archivo) | Revela salas (validadas contra el layout) y renderiza el mapa con niebla de guerra. | `revealed_nodes: list[str]` → texto con salas nuevas y PNG en `storage/maps/` |
@@ -153,7 +153,7 @@ Se abre en <http://localhost:8501>. El índice vectorial ya viene en el reposito
 | **Visibilidad de tools (streaming)** | Cada herramienta aparece en la línea de tiempo apenas se invoca, con sus argumentos; al terminar muestra el resumen del resultado. Al abrirla se ve el resultado completo. |
 | **Razonamiento** | Bloque plegable "Razonamiento", diferenciado de la respuesta. Se muestra en vivo mientras el modelo piensa. |
 | **Memoria** | Después de una tirada preguntá `¿Cuánto salió en esa tirada?`: responde sin que se lo repitas. |
-| **RAG** | Preguntá `¿Qué hace el hechizo Bola de Fuego?`: aparece la consulta de reglas y los fragmentos recuperados. |
+| **RAG y citas** | Preguntá `¿Qué hace el hechizo Bola de Fuego?`: aparece la consulta de reglas con sus **fuentes consultadas** (al abrir el paso), y la respuesta cita el documento, por ejemplo `(Fuente: spells.txt › Fireball)`. |
 | **Producto tangible** | Tras explorar salas, el botón **Descargar mapa** (en el chat y en la sidebar) exporta el PNG. |
 
 ## RAG: corpus e ingesta (reproducible)
@@ -168,6 +168,8 @@ Se abre en <http://localhost:8501>. El índice vectorial ya viene en el reposito
 4. **Índice:** FAISS local en `storage/vector_db/`. Cada fragmento guarda su `categoria` (= archivo de origen) y su `titulo`.
 
 **Tamaño del contexto:** la tool devuelve como máximo 4 fragmentos de ≤2000 caracteres (~8000 caracteres), para no saturar el contexto del agente.
+
+**Citas de las fuentes:** cada fragmento que recibe el agente lleva un encabezado con su documento de origen (`[Fuente 1: monsters.txt › Goblin]`) y la tool cierra con la línea `FUENTES CONSULTADAS`. El prompt del DM (`CITAS_RAG` en `agent/prompt.py`) le exige citar entre paréntesis, con ese mismo formato, todo dato de reglas que use, y no citar nada que no haya salido de la herramienta. La UI muestra la lista de fuentes al abrir el paso de la consulta. Como la búsqueda siempre devuelve 4 fragmentos, algunos pueden no ser relevantes: el modelo cita solo los que usa.
 
 **Reconstruir desde cero:**
 
