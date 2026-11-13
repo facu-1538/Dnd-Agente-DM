@@ -14,6 +14,7 @@ tipografía de lectura de la narración está en ui/style.css.
 import json
 import os
 import re
+import time
 import uuid
 from pathlib import Path
 
@@ -61,7 +62,12 @@ except ImportError as e:
     _state_manager_error = str(e)
 
 try:
-    from agent.core import run_agent, stream_agent, clear_conversation
+    from game_engine.map_renderer import DUNGEON_LAYOUT
+except ImportError:
+    DUNGEON_LAYOUT = {}
+
+try:
+    from agent.core import stream_agent, clear_conversation, seed_conversation
     _agent_available = True
 except ImportError as e:
     _agent_available = False
@@ -96,6 +102,8 @@ TOOL_UI = {
     "switch_and_render_map": (":green[:material/map:]", "Mapa del dungeon"),
     "damage_player": (":red[:material/heart_broken:]", "Daño al jugador"),
     "heal_player": (":green[:material/healing:]", "Curación"),
+    "set_character": (":orange[:material/badge:]", "Ficha del personaje"),
+    "manage_enemy": (":red[:material/skull:]", "Enemigo"),
 }
 
 
@@ -159,6 +167,21 @@ def resumen_tool(registro: dict) -> str:
             fuentes = re.findall(r"^\[Fuente \d+: (.+?)\]", salida, flags=re.M)
             if fuentes:
                 return f"{len(fuentes)} fragmentos · {fuentes[0]}"
+        if nombre == "set_character" and datos and "nombre" in datos:
+            return f"{datos['nombre']} · {datos.get('raza', '')} {datos.get('clase', '')}".strip()
+        if nombre == "manage_enemy" and datos and "nombre" in datos:
+            if datos.get("accion") == "spawn":
+                return f"entra {datos['nombre']} ({datos.get('hp')} HP)"
+            if datos.get("eliminado"):
+                rec = datos.get("recompensa", {})
+                return f"{datos['nombre']} derrotado · +{rec.get('xp', 0)} XP, +{rec.get('oro', 0)} oro"
+            if datos.get("accion") == "damage":
+                return f"{datos['nombre']}: {datos.get('hp_anterior')} → {datos.get('nuevo_hp')} HP"
+            return f"{datos['nombre']} abandona el combate"
+        if nombre == "switch_and_render_map":
+            m = re.search(r"^Ubicación actual: (.+?) \(", salida, flags=re.M)
+            if m:
+                return f"ahora en {m.group(1)}"
         if datos and "error" in datos:
             return "error"
     except Exception:
@@ -185,7 +208,11 @@ def etiqueta_tool(registro: dict) -> str:
     nombre = registro.get("name", "tool")
     icono, titulo = TOOL_UI.get(nombre, (":gray[:material/build:]", nombre))
     detalle = resumen_tool(registro) or pista_args(registro.get("input", {}))
-    return f"{icono} **{titulo}**" + (f" · {detalle}" if detalle else "")
+    # Tiempo desde que el agente anunció la tool hasta su resultado (las tools que corren en
+    # paralelo comparten tiempo; las instantáneas, como los dados, no muestran nada)
+    seg = registro.get("seg")
+    tiempo = f" · {seg:.1f} s" if seg is not None and seg >= 0.5 else ""
+    return f"{icono} **{titulo}**" + (f" · {detalle}" if detalle else "") + tiempo
 
 
 def estado_tool(registro: dict) -> str:
@@ -235,18 +262,24 @@ def mostrar_resultado(registro: dict):
         st.code(texto, language=None, wrap_lines=True)
 
 
-def paso_estatico(registro: dict):
+def paso_estatico(registro: dict, abierto: bool):
     """Paso de herramienta ya terminado (historial)."""
-    with st.status(etiqueta_tool(registro), type="step", state=estado_tool(registro), expanded=False):
+    with st.status(etiqueta_tool(registro), type="step", state=estado_tool(registro), expanded=abierto):
         mostrar_args(registro.get("input", {}))
         mostrar_resultado(registro)
 
 
-def renderizar_razonamiento(texto: str, key: str):
-    """Razonamiento del modelo (historial): plegado y diferenciado de la respuesta."""
-    with st.expander(":violet[:material/psychology:] Razonamiento", type="compact"):
+def renderizar_razonamiento(texto: str, key: str, abierto: bool):
+    """Razonamiento del modelo (historial): diferenciado de la respuesta; abierto o plegado."""
+    with st.expander(":violet[:material/psychology:] Razonamiento", expanded=abierto, type="compact"):
         with st.container(key=key):      # key "razon_*": estilo apagado en ui/style.css
             st.markdown(texto)
+
+
+def resumen_turno(n_tools: int, seg: float) -> str:
+    """Línea de cierre de un turno: cuántas herramientas usó el agente y cuánto tardó en total."""
+    herramientas = "sin herramientas" if n_tools == 0 else f"{n_tools} herramienta{'s' if n_tools != 1 else ''}"
+    return f":gray[:material/timer:] {herramientas} · {seg:.1f} s"
 
 
 def uso_mapa(tool_calls: list) -> bool:
@@ -307,7 +340,10 @@ with st.sidebar:
 
         if hp is not None and max_hp:
             st.markdown(f"#### :orange[:material/shield_person:] {info.get('nombre', 'Aventurero')}")
-            st.caption(f"{info.get('clase', '?')} · Nivel {info.get('nivel', '?')}")
+            if info.get("ficha_creada"):
+                st.caption(f"{info.get('raza', '')} {info.get('clase', '?')} · Nivel {info.get('nivel', '?')}".strip())
+            else:
+                st.caption("Personaje sin crear")
 
             st.markdown(f":red[:material/favorite:] **Vida** &nbsp; {hp} / {max_hp}")
             st.progress(max(0.0, min(1.0, hp / max_hp)))
@@ -315,6 +351,14 @@ with st.sidebar:
             col_oro, col_xp = st.columns(2)
             col_oro.markdown(f":orange[:material/paid:] **{info.get('oro', 0)}** oro")
             col_xp.markdown(f":violet[:material/auto_awesome:] **{info.get('experiencia', 0)}** XP")
+
+            try:
+                sala = state_manager.get_current_room()
+                st.markdown(
+                    f":green[:material/location_on:] **Ubicación** &nbsp; {DUNGEON_LAYOUT.get(sala, {}).get('nombre', sala)}"
+                )
+            except Exception:
+                pass
 
         # Enemigos: solo ocupan lugar si hay combate
         try:
@@ -342,6 +386,12 @@ with st.sidebar:
     else:
         with st.container(border=True):
             st.caption("El mapa se revelará al explorar el dungeon.")
+
+    # Pasos abiertos: despliega el razonamiento y cada herramienta (útil para la demo y la revisión)
+    pasos_abiertos = st.toggle(
+        "Mostrar pasos abiertos", value=True, key="pasos_abiertos",
+        help="Despliega el razonamiento y cada herramienta en el chat. Apagalo para una vista compacta.",
+    )
 
     st.button("Nueva partida", icon=":material/restart_alt:", width="stretch", on_click=nueva_partida)
 
@@ -373,47 +423,48 @@ if not _agent_available:
     )
     st.stop()
 
+
+@st.cache_resource(show_spinner=False)
+def precargar_rag() -> bool:
+    """
+    Importa y carga el RAG una sola vez al abrir la app. Importar langchain_community y
+    FAISS tarda unos 3 s; sin esto se pagarían en la primera consulta del primer turno.
+    (Cargar el índice en sí tarda menos de 0,3 s.)
+    """
+    try:
+        from rag.retriever import get_retriever
+        return get_retriever()._ensure_loaded()
+    except Exception:
+        return False
+
+
+if _vectorstore_available:
+    with st.spinner("Preparando el reglamento…"):
+        precargar_rag()
+
 # ---------------------------------------------------------------------------
 # MENSAJE DE BIENVENIDA
 # ---------------------------------------------------------------------------
-BIENVENIDA_HARDCODED = """Saludos, valiente aventurero. Soy tu **Dungeon Master**.
+BIENVENIDA = """**Bienvenido, aventurero.** Soy tu Dungeon Master.
 
-Te encontrás ante las puertas de una antigua mazmorra élfica, olvidada por los siglos.
-Las antorchas parpadean con una luz tenue y el aire huele a piedra húmeda y a algo más... algo antiguo.
+Ante ti se alza la entrada de una antigua mazmorra élfica, olvidada por los siglos. Las antorchas parpadean con una luz tenue y el aire huele a piedra húmeda y a algo antiguo.
 
-¿Qué decidís hacer?
+Antes de cruzar el umbral, forjemos a tu héroe. Dime, en un solo mensaje:
 
-- **Explorar** el primer pasillo
-- **Inspeccionar** los alrededores
-- **Preguntar** al anciano que espera en la entrada
+- **Raza:** humano, elfo, enano o mediano
+- **Clase:** guerrero, mago, pícaro o clérigo
+- **Nombre:** el que quieras
+
+Si prefieres que lo elija yo, escribe *sortea* y te propondré una combinación.
 
 *El destino aguarda.*"""
 
+# La bienvenida es un texto fijo: no gasta una llamada al modelo (cuota gratuita) y es instantánea.
+# Se registra en la memoria del agente para que sepa qué le dijo al jugador.
 if not st.session_state.messages:
     if not st.session_state.welcomed:
-        texto_bienvenida, tool_calls_bienvenida = BIENVENIDA_HARDCODED, []
-        with st.spinner("El Dungeon Master prepara la aventura…"):
-            mensaje_inicio = (
-                "INICIO_DE_PARTIDA: Preséntate como el Dungeon Master de esta aventura de D&D 5e. "
-                "Describe una escena de apertura atmosférica y emocionante en una mazmorra o dungeon. "
-                "Pregunta qué hace el jugador para comenzar. Responde SOLO en español."
-            )
-            resultado = run_agent(mensaje_inicio, thread_id=st.session_state.thread_id)
-            respuesta = texto_de(resultado.get("response", ""))
-            # run_agent no lanza excepciones: si falló, devuelve un texto que empieza con ❌
-            if respuesta and not respuesta.startswith("❌"):
-                texto_bienvenida = respuesta
-                tool_calls_bienvenida = resultado.get("tool_calls", [])
-
-        st.session_state.messages.append({
-            "role": "assistant",
-            "content": texto_bienvenida,
-            "tool_calls": tool_calls_bienvenida,
-        })
-    else:
-        st.session_state.messages.append({
-            "role": "assistant", "content": BIENVENIDA_HARDCODED, "tool_calls": [],
-        })
+        seed_conversation(st.session_state.thread_id, BIENVENIDA)
+    st.session_state.messages.append({"role": "assistant", "content": BIENVENIDA, "tool_calls": []})
     st.session_state.welcomed = True
 
 # ---------------------------------------------------------------------------
@@ -429,13 +480,15 @@ for idx, mensaje in enumerate(st.session_state.messages):
         if rol == "assistant":
             # Orden fijo: razonamiento, herramientas (en orden de invocación), respuesta
             if mensaje.get("reasoning"):
-                renderizar_razonamiento(mensaje["reasoning"], key=f"razon_{idx}")
+                renderizar_razonamiento(mensaje["reasoning"], key=f"razon_{idx}", abierto=pasos_abiertos)
             for registro in tool_calls:
-                paso_estatico(registro)
+                paso_estatico(registro, abierto=pasos_abiertos)
             with st.container(key=f"narr_{idx}"):
                 st.markdown(texto_de(mensaje["content"]))
             if uso_mapa(tool_calls):
                 boton_descarga_mapa(f"dl_mapa_{idx}")
+            if mensaje.get("seg") is not None:
+                st.caption(resumen_turno(len(tool_calls), mensaje["seg"]))
         else:
             st.markdown(texto_de(mensaje["content"]))
 
@@ -462,6 +515,7 @@ if prompt := st.chat_input("¿Qué hace tu personaje?", submit_mode="disable"):
         pasos: dict = {}        # id de tool_call -> (registro, st.status del paso)
         razon_estado = None     # st.status del razonamiento; se crea con el primer bloque
         razon_texto = None
+        t_turno = time.time()
 
         for ev in stream_agent(prompt, thread_id=st.session_state.thread_id):
             tipo = ev["type"]
@@ -477,7 +531,7 @@ if prompt := st.chat_input("¿Qué hace tu personaje?", submit_mode="disable"):
                 razon_texto.markdown(razonamiento)
 
             elif tipo == "tool_call":
-                registro = {"name": ev["name"], "input": ev["args"], "output": ""}
+                registro = {"name": ev["name"], "input": ev["args"], "output": "", "_t": time.time()}
                 tool_calls.append(registro)
                 # El modelo puede razonar y hablar en varias llamadas dentro de un mismo turno:
                 # se separa lo anterior a la tool de lo que venga después
@@ -487,7 +541,8 @@ if prompt := st.chat_input("¿Qué hace tu personaje?", submit_mode="disable"):
                     razonamiento += "\n\n"
                 # El paso aparece apenas el agente decide invocar la tool, ya con sus argumentos
                 with tools_box:
-                    estado = st.status(etiqueta_tool(registro), type="step", state="running")
+                    estado = st.status(etiqueta_tool(registro), type="step", state="running",
+                                       expanded=pasos_abiertos)
                     with estado:
                         mostrar_args(registro["input"])
                 pasos[ev["id"]] = (registro, estado)
@@ -496,6 +551,7 @@ if prompt := st.chat_input("¿Qué hace tu personaje?", submit_mode="disable"):
                 if ev["id"] in pasos:
                     registro, estado = pasos[ev["id"]]
                     registro["output"] = ev["output"]
+                    registro["seg"] = round(time.time() - registro.pop("_t", time.time()), 1)
                     with estado:
                         mostrar_resultado(registro)
                     estado.update(label=etiqueta_tool(registro), state=estado_tool(registro))
@@ -507,11 +563,18 @@ if prompt := st.chat_input("¿Qué hace tu personaje?", submit_mode="disable"):
             elif tipo == "error":
                 error = ev["message"]
 
+        seg_turno = time.time() - t_turno
+        for registro in tool_calls:
+            registro.pop("_t", None)      # marca interna de tiempo; no se guarda en el historial
+
         if razon_estado is not None:
             razon_estado.update(
-                label=":violet[:material/psychology:] Razonamiento", state="complete", expanded=False
+                label=":violet[:material/psychology:] Razonamiento", state="complete",
+                expanded=pasos_abiertos,
             )
         texto_box.markdown(texto)
+        if not error:
+            st.caption(resumen_turno(len(tool_calls), seg_turno))
 
         # Exportar el mapa desde el chat si este turno lo actualizó (misma key que usará el historial)
         if uso_mapa(tool_calls):
@@ -519,17 +582,18 @@ if prompt := st.chat_input("¿Qué hace tu personaje?", submit_mode="disable"):
 
         if error:
             st.error(
-                f"`{error}`\n\nIntentá de nuevo o reiniciá con «Nueva partida».",
+                f"{error}\n\nPuedes reenviar tu mensaje o reiniciar con «Nueva partida».",
                 title="El Dungeon Master tropezó con un hechizo roto",
                 icon=":material/error:",
             )
 
-        # Guardar en el historial (con razonamiento y tools para poder re-renderizar)
+        # Guardar en el historial (con razonamiento, tools y tiempo para poder re-renderizar)
         st.session_state.messages.append({
             "role": "assistant",
             "content": texto or (f"*[Error del sistema: {error}]*" if error else ""),
             "tool_calls": tool_calls,
             "reasoning": razonamiento,
+            "seg": None if error else seg_turno,
         })
 
     # Refrescar para actualizar el sidebar (HP, mapa, etc.)
