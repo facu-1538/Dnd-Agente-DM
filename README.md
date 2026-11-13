@@ -142,6 +142,7 @@ GEMINI_API_KEY=tu_clave_real
 | `DM_INCLUDE_THOUGHTS` | `1` | Con `0` no se pide el razonamiento al modelo. |
 | `GEMINI_MAX_RETRIES` | `4` | Intentos totales por llamada (incluye el original) ante 429/5xx/timeouts. |
 | `GEMINI_TIMEOUT` | `30` | Segundos máximos por intento. Peor caso por llamada: intentos × timeout + esperas. |
+| `GEMINI_THINKING_BUDGET` | `-1` | Tokens máximos de razonamiento (`-1` = dinámico, sin tope). Un valor fijo, por ejemplo `2048`, acota el pensamiento. |
 
 ### 4. Ejecutar
 
@@ -151,7 +152,7 @@ streamlit run app.py
 
 Se abre en <http://localhost:8501>. El índice vectorial ya viene en el repositorio, así que **no hace falta ejecutar `setup_rag.py`** para jugar.
 
-> Los tiers gratuitos tienen límite de peticiones. La latencia es variable: un turno de combate de 4 llamadas al modelo tardó 192 s después de varias pruebas seguidas, mientras que un turno de reglas de 2 llamadas tardó 9 s tras una pausa de 75 s. Probablemente se deba al límite de peticiones del tier gratuito (no lo confirmamos con logs). Para una demo conviene dejar respirar un minuto entre pruebas. Si ves un error 429, esperá un minuto y reenviá el mensaje.
+> Los tiers gratuitos tienen límite de peticiones. **La latencia de Gemini es muy variable.** Medimos el mismo turno de combate (impactar y derrotar a un goblin, 4 llamadas al modelo), una sola muestra por configuración: sin razonamiento (`DM_INCLUDE_THOUGHTS=0`) 7 s; con `GEMINI_THINKING_BUDGET=2048` 28 s; con `1024` 74 s; con `-1` (dinámico, el valor por defecto) 83 s. No es monótono, así que no pudimos aislar la causa; en una de las corridas una llamada tardó ~30 s, justo el `GEMINI_TIMEOUT`, y se reintentó. Un turno de 4 llamadas llegó a tardar 192 s antes de tener `timeout`. Para la demo conviene dejar respirar un minuto entre pruebas y, si la latencia molesta, usar `DM_INCLUDE_THOUGHTS=0` (turnos de pocos segundos, a costa de no mostrar el razonamiento). Si ves un error 429, esperá un minuto y reenviá el mensaje.
 
 ## Cómo demostrar cada requisito
 

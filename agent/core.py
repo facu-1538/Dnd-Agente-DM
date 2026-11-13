@@ -52,6 +52,11 @@ MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
 # la UI simplemente no muestra nada (ver README). Se puede apagar con DM_INCLUDE_THOUGHTS=0.
 INCLUDE_THOUGHTS = os.getenv("DM_INCLUDE_THOUGHTS", "1") != "0"
 
+# Tokens máximos que el modelo puede dedicar a pensar (-1 = dinámico, sin tope). Medido:
+# el mismo turno de combate tardó 82 s con -1 y 7 s sin razonamiento, así que el pensamiento
+# dinámico es un riesgo de latencia. Configurable por entorno.
+THINKING_BUDGET = int(os.getenv("GEMINI_THINKING_BUDGET", "-1"))
+
 # Tope de pasos del grafo (cada tool call consume ~2). Evita bucles infinitos.
 RECURSION_LIMIT = 25
 
@@ -110,9 +115,9 @@ def build_agent():
         timeout=TIMEOUT,
         include_thoughts=INCLUDE_THOUGHTS,
         # Verificado con gemini-3.1-flash-lite: include_thoughts SOLO no devuelve nada;
-        # hace falta thinking_budget=-1 (pensamiento dinámico) para recibir el bloque
-        # "thinking". Gemini entrega un resumen del razonamiento (en inglés).
-        thinking_budget=-1 if INCLUDE_THOUGHTS else None,
+        # hace falta un thinking_budget para recibir el bloque "thinking". Gemini entrega
+        # un resumen del razonamiento (en inglés). -1 = dinámico (sin tope).
+        thinking_budget=THINKING_BUDGET if INCLUDE_THOUGHTS else None,
     )
 
     return lc_create_agent(
