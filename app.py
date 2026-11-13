@@ -127,7 +127,10 @@ def es_error(salida: str) -> bool:
     """Heurística: las tools devuelven '❌'/'⚠️' o un JSON con clave 'error' al fallar."""
     if not salida:
         return False
-    if salida.lstrip().startswith(("❌", "⚠️")):
+    # Prefijos de error de las tools, incluidos los mensajes de fallo del retriever del RAG
+    if salida.lstrip().startswith(
+        ("❌", "⚠️", "Error al realizar", "No hay base de conocimientos")
+    ):
         return True
     datos = _json(salida)
     return bool(datos and "error" in datos)
