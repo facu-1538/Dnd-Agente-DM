@@ -32,26 +32,38 @@ def _json(datos: dict) -> str:
 # TOOL 1: Consulta a la base de conocimientos RAG de D&D 5e
 # ---------------------------------------------------------------------------
 
+_CATEGORIAS_RAG = {"spells", "monsters", "conditions", "armor", "weapons", "rules", "classes"}
+
+
 @tool
-def query_rules_rag(query: str, category: str = "general") -> str:
+def query_rules_rag(query: str, category: str = "general", spell_level: int = -1,
+                    school: str = "", monster_type: str = "", max_cr: float = -1.0) -> str:
     """
-    Consulta la base de conocimientos de D&D 5e usando recuperación semántica (RAG).
+    Consulta la base de conocimientos de D&D 5e (RAG): similitud semántica más filtros por metadatos.
 
     Usa esta herramienta cuando el jugador pregunta sobre:
     - Hechizos: nombre, efecto, componentes, duración, nivel, escuela
     - Monstruos: estadísticas, CR, HP, AC, acciones, resistencias
-    - Reglas del juego: combate, movimiento, condiciones, acciones especiales
-    - Condiciones: aturdido, paralizado, envenenado, asustado, etc.
-    - Equipamiento: armas, armaduras, objetos mágicos
+    - Clases y subclases: dado de golpe, salvaciones, rasgos por nivel (mago, guerrero, pícaro...)
+    - Reglas del juego, condiciones, armas y armaduras
+
+    Si la pregunta nombra un dato estructurado, pásalo como filtro además de la consulta (así se
+    encuentra lo que la similitud sola no encuentra). Los filtros son opcionales: déjalos en su
+    valor por defecto si no aplican.
 
     Args:
-        query: La consulta en lenguaje natural sobre la regla o elemento de D&D
-        category: Documento donde buscar. Valores válidos: spells, monsters, conditions,
-                  armor, weapons, rules o general (busca en todos). Con cualquier otro
-                  valor se busca en todos los documentos.
+        query: La consulta en lenguaje natural (idealmente en inglés, como el corpus; ej: "fire damage").
+        category: Documento donde buscar: spells, monsters, conditions, armor, weapons, rules,
+                  classes o general (todos). Con cualquier otro valor se busca en todos.
+        spell_level: Solo hechizos. Nivel de 0 (truco) a 9. Con -1 no se filtra.
+        school: Solo hechizos. Escuela de magia: abjuration, conjuration, divination, enchantment,
+                evocation, illusion, necromancy o transmutation. Vacío = no se filtra.
+        monster_type: Solo monstruos. Tipo: aberration, beast, celestial, construct, dragon, elemental,
+                fey, fiend, giant, humanoid, monstrosity, ooze, plant o undead. Vacío = no se filtra.
+        max_cr: Solo monstruos. Desafío máximo (0.25 = CR 1/4, 0.5 = CR 1/2, 5 = CR 5). Con -1 no se filtra.
 
     Returns:
-        Fragmentos recuperados, cada uno con su documento de origen ("archivo.txt › Título"),
+        Fragmentos recuperados (como máximo 4), cada uno con su documento de origen ("archivo.txt › Título"),
         y al final la línea FUENTES CONSULTADAS. Al usar esta información en la respuesta,
         cita la fuente así: (Fuente: monsters.txt › Goblin).
     """
@@ -70,11 +82,17 @@ def query_rules_rag(query: str, category: str = "general") -> str:
             "Ejecuta 'python setup_rag.py' primero para ingesta y construcción del vector store."
         )
 
-    # Buscar por categoría si se especifica, o búsqueda general
-    if category and category != "general":
-        resultado = retriever.search_by_category(query, category, k=4)
-    else:
-        resultado = retriever.search(query, k=4)
+    # Self-query: el agente decide qué filtros aplicar; los valores "vacíos" (-1, "") significan sin filtro
+    categoria = category if category in _CATEGORIAS_RAG else None
+    resultado = retriever.search_filtered(
+        query,
+        k=4,
+        category=categoria,
+        spell_level=spell_level if spell_level >= 0 else None,
+        school=school.strip() or None,
+        monster_type=monster_type.strip() or None,
+        max_cr=max_cr if max_cr >= 0 else None,
+    )
 
     # Registro de la partida: qué se consultó y de qué documentos salió
     fuentes = re.search(r"^FUENTES CONSULTADAS: (.+)$", resultado, flags=re.M)

@@ -6,11 +6,14 @@ el vectorstore FAISS construido por setup_rag.py.
 """
 
 import os
+import re
 from pathlib import Path
 from dotenv import load_dotenv
 
 from langchain_community.vectorstores import FAISS
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
+
+from rag.metadata import normalizar_escuela, normalizar_tipo
 
 # Cargar variables de entorno
 load_dotenv()
@@ -62,6 +65,8 @@ class RAGRetriever:
         self.embeddings = None
         # Bandera para saber si ya se intentó cargar
         self._cargado = False
+        # (categoria, titulo en minúsculas) -> primer fragmento de esa entrada; se arma al primer uso
+        self._titulos = None
 
     def load(self) -> bool:
         """
@@ -167,94 +172,129 @@ class RAGRetriever:
             + "\n\nFUENTES CONSULTADAS: " + "; ".join(fuentes)
         )
 
-    def search(self, query: str, k: int = 4) -> str:
-        """
-        Realiza una búsqueda por similitud semántica en el vectorstore.
+    # ------------------------------------------------------------------
+    # Búsqueda: similitud vectorial + filtros por metadatos + coincidencia de título
+    # ------------------------------------------------------------------
+    def _indice_titulos(self) -> dict:
+        """Primer fragmento de cada entrada del corpus, indexado por (categoría, título en minúsculas)."""
+        if self._titulos is None:
+            self._titulos = {}
+            for doc in self.vectorstore.docstore._dict.values():
+                clave = (doc.metadata.get("categoria"), str(doc.metadata.get("titulo", "")).lower())
+                self._titulos.setdefault(clave, doc)   # el docstore conserva el orden: primero va el 1.er fragmento
+        return self._titulos
 
-        Busca los k documentos más relevantes para la consulta dada y retorna
-        su contenido concatenado como texto.
+    @staticmethod
+    def _crear_filtro(categoria, nivel, escuela, tipo, cr_max):
+        """Función que decide, por los metadatos de un fragmento, si cumple todos los filtros pedidos."""
+        def cumple(meta: dict) -> bool:
+            if categoria and meta.get("categoria") != categoria:
+                return False
+            if nivel is not None and meta.get("nivel") != nivel:
+                return False
+            if escuela and meta.get("escuela") != escuela:
+                return False
+            if tipo and meta.get("tipo") != tipo:
+                return False
+            if cr_max is not None and (meta.get("cr") is None or meta["cr"] > cr_max):
+                return False
+            return True
+        return cumple
+
+    def _coincidencias_titulo(self, query: str, filtro, categoria, maximo: int = 2) -> list:
+        """
+        Entradas cuyo título aparece en la consulta ("Fireball", "wizard"): se priorizan sobre la
+        similitud porque son lo que el jugador nombró. Evita falsos positivos con títulos cortos
+        ("Light", "Aid"): un título de una sola palabra solo cuenta si tiene 5 letras o más y la
+        consulta es corta, o si el agente ya acotó la búsqueda a esa categoría.
+        """
+        q = query.lower()
+        palabras = len(q.split())
+        candidatos = []
+        for (cat, titulo), doc in self._indice_titulos().items():
+            if not titulo or not filtro(doc.metadata):
+                continue
+            if not re.search(rf"(?<!\w){re.escape(titulo)}(?!\w)", q):
+                continue
+            if " " not in titulo and not categoria and (len(titulo) < 5 or palabras > 3):
+                continue
+            candidatos.append((len(titulo), doc))
+        candidatos.sort(key=lambda x: -x[0])             # el título más largo es el más específico
+        return [d for _, d in candidatos[:maximo]]
+
+    def search_filtered(self, query: str, k: int = 4, category: str | None = None,
+                        spell_level: int | None = None, school: str | None = None,
+                        monster_type: str | None = None, max_cr: float | None = None) -> str:
+        """
+        Búsqueda híbrida (self-query): similitud vectorial restringida por metadatos.
+
+        Los filtros se aplican sobre TODO el índice (fetch_k = tamaño del índice); FAISS filtra después
+        de traer los más cercanos, así que con el valor por defecto (20) una categoría chica casi nunca
+        devolvía nada. Los fragmentos cuyo título aparece en la consulta van primero. El total nunca
+        supera k, para no saturar el contexto del agente.
 
         Args:
-            query: La consulta o pregunta a buscar.
-            k: Número de documentos más relevantes a retornar (por defecto 4).
-
-        Returns:
-            Texto concatenado de los documentos encontrados, con separadores.
-            Si no hay vectorstore disponible o no se encuentran resultados,
-            retorna un mensaje descriptivo.
+            query: Consulta en lenguaje natural.
+            k: Cantidad máxima de fragmentos a devolver.
+            category: spells, monsters, conditions, armor, weapons, rules o classes.
+            spell_level: Nivel del hechizo (0 = truco).
+            school: Escuela de magia (evocation, necromancy...; acepta español).
+            monster_type: Tipo de criatura (dragon, undead...; acepta español).
+            max_cr: Desafío máximo del monstruo (0.25 = CR 1/4).
         """
-        # Verificar que el vectorstore esté disponible
         if not self._ensure_loaded():
             return (
                 "No hay base de conocimientos D&D disponible. "
                 "Ejecuta setup_rag.py para crear el vectorstore."
             )
-
         try:
-            # Realizar búsqueda por similitud
-            documentos = self.vectorstore.similarity_search(query, k=k)
+            escuela = normalizar_escuela(school) if school else None
+            tipo = normalizar_tipo(monster_type) if monster_type else None
+            filtros = {n: v for n, v in (("categoría", category), ("nivel", spell_level), ("escuela", escuela),
+                                         ("tipo", tipo), ("CR máx", max_cr)) if v is not None and v != ""}
+            if filtros:
+                filtro = self._crear_filtro(category or None, spell_level, escuela, tipo, max_cr)
+                similares = self.vectorstore.similarity_search(
+                    query, k=k, filter=filtro, fetch_k=self.vectorstore.index.ntotal
+                )
+                por_titulo = self._coincidencias_titulo(query, filtro, category)
+            else:
+                similares = self.vectorstore.similarity_search(query, k=k)
+                por_titulo = self._coincidencias_titulo(query, lambda m: True, None)
+
+            documentos, vistos = [], set()
+            for doc in por_titulo + similares:           # primero lo nombrado, luego lo parecido
+                huella = doc.metadata.get("hash") or id(doc)
+                if huella not in vistos:
+                    vistos.add(huella)
+                    documentos.append(doc)
+            documentos = documentos[:k]
 
             if not documentos:
+                if filtros:
+                    aplicados = ", ".join(f"{n}={v}" for n, v in filtros.items())
+                    return (f"Sin resultados con los filtros aplicados ({aplicados}). "
+                            "Prueba quitando algún filtro o con otra categoría.")
                 return "No se encontró información relevante sobre ese tema en la base de conocimientos."
-
             return self._formatear(documentos)
 
         except Exception as e:
             return f"Error al realizar la búsqueda: {e}"
 
+    def search(self, query: str, k: int = 4) -> str:
+        """Búsqueda general (sin filtros) en todo el corpus. Ver search_filtered()."""
+        return self.search_filtered(query, k=k)
+
     def search_by_category(self, query: str, category: str, k: int = 4) -> str:
         """
-        Realiza una búsqueda por similitud filtrada por categoría.
-
-        Similar a search(), pero intenta filtrar los resultados por la categoría
-        indicada (por ejemplo, "spells", "monsters", "conditions").
-
-        Args:
-            query: La consulta o pregunta a buscar.
-            category: Categoría por la que filtrar (debe coincidir con la metadata).
-            k: Número de documentos más relevantes a retornar (por defecto 4).
-
-        Returns:
-            Texto concatenado de los documentos encontrados, con separadores.
-            Si la categoría no produce resultados, hace una búsqueda general.
+        Búsqueda restringida a una categoría (spells, monsters, conditions, armor, weapons, rules, classes).
+        Si la categoría no existe o no tiene resultados, hace una búsqueda general.
         """
-        # Verificar que el vectorstore esté disponible
-        if not self._ensure_loaded():
-            return (
-                "No hay base de conocimientos D&D disponible. "
-                "Ejecuta setup_rag.py para crear el vectorstore."
-            )
-
-        try:
-            # Intentar búsqueda con filtro de metadata por categoría
-            # FAISS soporta filtros de metadata con similarity_search_with_score
-            # pero la implementación exacta depende de la versión de langchain
-            try:
-                documentos = self.vectorstore.similarity_search(
-                    query,
-                    k=k * 3,  # Buscar más resultados para filtrar después
-                    filter={"categoria": category}
-                )
-            except (TypeError, NotImplementedError):
-                # Si el filtro no está soportado, buscar sin filtro y filtrar manualmente
-                todos = self.vectorstore.similarity_search(query, k=k * 3)
-                documentos = [
-                    doc for doc in todos
-                    if doc.metadata.get("categoria", "").lower() == category.lower()
-                ]
-
-            # Si no hay resultados con el filtro, hacer búsqueda general
-            if not documentos:
-                print(f"  No se encontraron resultados en categoría '{category}', buscando en general...")
-                return self.search(query, k=k)
-
-            # Limitar a k resultados
-            documentos = documentos[:k]
-
-            return self._formatear(documentos)
-
-        except Exception as e:
-            return f"Error al realizar la búsqueda por categoría: {e}"
+        resultado = self.search_filtered(query, k=k, category=category)
+        if resultado.startswith("Sin resultados con los filtros"):
+            print(f"  No se encontraron resultados en categoría '{category}', buscando en general...")
+            return self.search(query, k=k)
+        return resultado
 
 
 def get_retriever() -> RAGRetriever:

@@ -18,7 +18,7 @@ ESTILO
 
 HERRAMIENTAS: úsalas de verdad; nunca simules su resultado ni inventes cifras que dependan de ellas.
 - execute_dice_roll: todo lo que dependa del azar (ataques, daño, salvaciones, pruebas de habilidad, iniciativa). Pasa la CA o la CD en target_dc_or_ac.
-- query_rules_rag: estadísticas de monstruos, hechizos, reglas, condiciones, armas y armaduras. Nunca inventes esos datos.
+- query_rules_rag: estadísticas de monstruos, hechizos, clases, reglas, condiciones, armas y armaduras. Cuando la pregunta nombre un nivel, escuela, tipo o desafío, pásalo como filtro. Nunca inventes esos datos.
 - manage_enemy: al empezar un combate, "spawn" de cada enemigo con su hp y su recompensa (xp y gold) según su CR; luego "damage" cuando el jugador lo hiere. Al derrotarlo, el jugador cobra la recompensa solo.
 - damage_player y heal_player: primero execute_dice_roll, después la herramienta con el valor final, ANTES de narrar. Si el ataque falla, no llames a damage_player. No hay daño ni curación en la introducción.
 - switch_and_render_map: cuando el jugador entra a una sala o descubre una zona; indica siempre current_room.
