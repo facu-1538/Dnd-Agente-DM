@@ -25,6 +25,8 @@ from langchain_text_splitters import MarkdownHeaderTextSplitter, RecursiveCharac
 # Cargar variables de entorno desde .env
 load_dotenv()
 
+from rag.metadata import completar_metadatos  # metadatos estructurados (nivel, escuela, tipo, CR...)
+
 # URL base de la API Open5e (SRD D&D 5e)
 BASE_URL = "https://api.open5e.com"
 
@@ -229,6 +231,51 @@ def format_condition(item: dict) -> str:
     return f"## {nombre}\n\n**Descripción:** {desc}\n"
 
 
+def format_class(item: dict) -> str:
+    """Formatea una clase (o subclase) de la API v2 como Markdown, con sus rasgos ordenados por nivel."""
+    nombre = item.get("name", "Sin nombre")
+    base = item.get("subclass_of")
+    if isinstance(base, dict):
+        base = base.get("name")
+    pv = item.get("hit_points") or {}
+    salvaciones = ", ".join(x.get("name", "") for x in item.get("saving_throws") or [])
+    principales = ", ".join(x.get("name", "") if isinstance(x, dict) else str(x)
+                            for x in item.get("primary_abilities") or [])
+
+    texto = f"## {nombre}\n\n**Tipo:** {'Subclase' if base else 'Clase'}\n"
+    if base:
+        texto += f"**Subclase de:** {base}\n"
+    if item.get("hit_dice"):
+        texto += f"**Dado de golpe:** {item['hit_dice']}\n"
+    if pv.get("hit_points_at_1st_level"):
+        texto += f"**Vida al nivel 1:** {pv['hit_points_at_1st_level']}\n"
+    if pv.get("hit_points_at_higher_levels"):
+        texto += f"**Vida en niveles superiores:** {pv['hit_points_at_higher_levels']}\n"
+    if salvaciones:
+        texto += f"**Salvaciones:** {salvaciones}\n"
+    if principales:
+        texto += f"**Habilidad principal:** {principales}\n"
+    if item.get("caster_type") and str(item["caster_type"]).upper() != "NONE":
+        texto += f"**Lanzador de conjuros:** {item['caster_type']}\n"
+    if item.get("desc"):
+        texto += f"\n{item['desc']}\n"
+
+    def nivel_minimo(rasgo: dict) -> int:
+        niveles = [g.get("level", 99) for g in rasgo.get("gained_at") or []]
+        return min(niveles) if niveles else 0
+
+    # La API trae como "rasgo" las columnas de la tabla de la clase con el texto "[Column data]": no aportan nada
+    rasgos = sorted((r for r in item.get("features") or [] if "[Column data]" not in str(r.get("desc", ""))),
+                    key=nivel_minimo)
+    if rasgos:
+        texto += "\n**Rasgos:**\n"
+        for r in rasgos:
+            niveles = sorted({g.get("level") for g in r.get("gained_at") or [] if g.get("level")})
+            cuando = f" (nivel {', '.join(str(n) for n in niveles)})" if niveles else ""
+            texto += f"- **{r.get('name', 'Rasgo')}{cuando}:** {r.get('desc', '')}\n"
+    return texto
+
+
 def save_category(category: str, items: list, formatter) -> str:
     """
     Guarda una lista de ítems formateados en un archivo de texto.
@@ -260,86 +307,58 @@ def save_category(category: str, items: list, formatter) -> str:
     return str(ruta_archivo)
 
 
+CATEGORIAS = ["spells", "monsters", "conditions", "weapons", "armor", "rules", "classes"]
+
+
+def _falta(categoria: str, force: bool) -> bool:
+    """True si hay que descargar esa categoría (no existe su .txt, está vacío o se pidió --force)."""
+    ruta = RAG_DATA_DIR / f"{categoria}.txt"
+    return force or not ruta.exists() or ruta.stat().st_size == 0
+
+
 def ingest_data(force: bool = False):
     """
     Obtiene datos de la API Open5e y los guarda como archivos de texto Markdown.
 
-    Si ya existen archivos .txt en el directorio de datos y no se especifica
-    force=True, se omite la descarga para no repetir peticiones a la red.
+    Es incremental: solo descarga las categorías cuyo .txt todavía no existe (o todas con
+    force=True), para no repetir peticiones a la red.
 
-    Categorías que se obtienen:
-    - Hechizos (spells)
-    - Monstruos (monsters)
-    - Condiciones (conditions)
-    - Secciones del SRD (sections) - incluye reglas, armas, armaduras, etc.
+    Categorías: hechizos (spells), monstruos (monsters), condiciones (conditions), armas (weapons),
+    armaduras (armor), reglas (rules) y clases/subclases (classes).
     """
     print("=" * 60)
     print("INGESTA DE DATOS - D&D 5e AI Dungeon Master")
     print("=" * 60)
     print(f"Directorio de datos: {RAG_DATA_DIR.absolute()}")
 
-    # Verificar si ya existen archivos .txt con contenido
-    archivos_existentes = [f for f in RAG_DATA_DIR.glob("*.txt") if f.stat().st_size > 0] if RAG_DATA_DIR.exists() else []
-
-    if archivos_existentes and not force:
-        print(f"\nℹ Se encontraron {len(archivos_existentes)} archivos .txt existentes:")
-        for arch in archivos_existentes:
-            tamano_kb = arch.stat().st_size / 1024
-            print(f"  - {arch.name} ({tamano_kb:.1f} KB)")
-        print("\n✓ Omitiendo la descarga desde la API porque la información ya existe.")
-        print("  (Si deseas forzar una nueva descarga, ejecuta: python setup_rag.py --force)")
+    faltan = [c for c in CATEGORIAS if _falta(c, force)]
+    if not faltan:
+        print(f"\n✓ Omitiendo la descarga desde la API: ya existen los {len(CATEGORIAS)} documentos.")
+        print("  (Para forzar una nueva descarga, ejecuta: python setup_rag.py --force)")
         return
+    print(f"\nCategorías a descargar: {', '.join(faltan)}")
 
-    # --- Hechizos ---
-    print("\n[1/4] Obteniendo hechizos...")
-    hechizos = fetch_all_pages("/spells/?document__slug=wotc-srd")
-    if hechizos:
-        ruta = save_category("spells", hechizos, format_spell)
-        print(f"  ✓ {len(hechizos)} hechizos guardados en {ruta}")
-    else:
-        print("  ✗ No se obtuvieron hechizos")
-
-    # --- Monstruos ---
-    print("\n[2/4] Obteniendo monstruos...")
-    monstruos = fetch_all_pages("/monsters/?document__slug=wotc-srd")
-    if monstruos:
-        ruta = save_category("monsters", monstruos, format_monster)
-        print(f"  ✓ {len(monstruos)} monstruos guardados en {ruta}")
-    else:
-        print("  ✗ No se obtuvieron monstruos")
-
-    # --- Condiciones ---
-    print("\n[3/4] Obteniendo condiciones...")
-    condiciones = fetch_all_pages("/v2/conditions/")
-    
-    if condiciones:
-        ruta = save_category(
-            "conditions",
-            condiciones,
-            format_condition)
-        print(f"  ✓ {len(condiciones)} condiciones guardadas en {ruta}")
-    else:
-        print("  ✗ No se obtuvieron condiciones")
-
-        # --- Armas, armaduras y reglas (SRD 2014) ---
-    print("\n[4/4] Obteniendo armas, armaduras y reglas...")
-    extras = [
-        ("weapons", "/v2/weapons/?document__key=srd-2014",
-         ["damage_dice", "damage_type", "range", "long_range", "properties"]),
-        ("armor", "/v2/items/?is_armor=true&document__key=srd-2014",
-         ["desc", "armor", "cost", "weight"]),
-        ("rules", "/v2/rules/?document__key=srd-2014",
-         ["desc"]),
-    ]
-    for nombre, endpoint, campos in extras:
+    # Cada categoría: (endpoint, formateador). weapons/armor/rules usan el formato genérico.
+    fuentes = {
+        "spells": ("/spells/?document__slug=wotc-srd", format_spell),
+        "monsters": ("/monsters/?document__slug=wotc-srd", format_monster),
+        "conditions": ("/v2/conditions/", format_condition),
+        "weapons": ("/v2/weapons/?document__key=srd-2014",
+                    lambda item: format_simple(item, ["damage_dice", "damage_type", "range", "long_range", "properties"])),
+        "armor": ("/v2/items/?is_armor=true&document__key=srd-2014",
+                  lambda item: format_simple(item, ["desc", "armor", "cost", "weight"])),
+        "rules": ("/v2/rules/?document__key=srd-2014", lambda item: format_simple(item, ["desc"])),
+        "classes": ("/v2/classes/?document__key=srd-2014", format_class),
+    }
+    for n, categoria in enumerate(faltan, 1):
+        endpoint, formateador = fuentes[categoria]
+        print(f"\n[{n}/{len(faltan)}] Obteniendo {categoria}...")
         datos = fetch_all_pages(endpoint)
         if datos:
-            ruta = save_category(
-                nombre, datos, lambda item, c=campos: format_simple(item, c)
-            )
-            print(f"  ✓ {len(datos)} {nombre} guardados en {ruta}")
+            ruta = save_category(categoria, datos, formateador)
+            print(f"  ✓ {len(datos)} entradas guardadas en {ruta}")
         else:
-            print(f"  ✗ No se obtuvo {nombre}")
+            print(f"  ✗ No se obtuvo {categoria}")
 
 
 def es_cuota_diaria(error: Exception) -> bool:
@@ -396,6 +415,7 @@ def build_vectorstore():
 
     recortador = RecursiveCharacterTextSplitter(chunk_size=2000, chunk_overlap=200)
     docs = recortador.split_documents(docs)
+    completar_metadatos(docs)   # nivel/escuela, tipo/CR, clase... desde la entrada completa (no cambia el hash)
 
     # Huella de cada fragmento (sin duplicados)
     unicos = {}
@@ -416,6 +436,11 @@ def build_vectorstore():
             str(VECTOR_DB_DIR), embeddings, allow_dangerous_deserialization=True
         )
         hechos = {d.metadata.get("hash") for d in vectorstore.docstore._dict.values()}
+        # Metadatos de lo ya indexado: se completan sin volver a calcular embeddings
+        rellenados = completar_metadatos(list(vectorstore.docstore._dict.values()))
+        if rellenados:
+            vectorstore.save_local(str(VECTOR_DB_DIR))
+            print(f"Metadatos completados en {rellenados} fragmentos ya indexados (sin gastar embeddings).")
     print(f"Ya indexados: {len(hechos)}")
 
     pendientes = [d for h, d in unicos.items() if h not in hechos]
