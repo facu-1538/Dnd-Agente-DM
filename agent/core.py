@@ -13,12 +13,13 @@ por eso la memoria sobrevive entre turnos. Se pierde al reiniciar el proceso.
 """
 
 import os
+import re
 import sys
 from typing import Iterator
 
 from dotenv import load_dotenv
 from langchain.agents import create_agent as lc_create_agent
-from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.errors import GraphRecursionError
@@ -54,6 +55,11 @@ INCLUDE_THOUGHTS = os.getenv("DM_INCLUDE_THOUGHTS", "1") != "0"
 # Tope de pasos del grafo (cada tool call consume ~2). Evita bucles infinitos.
 RECURSION_LIMIT = 25
 
+# Intentos del cliente de Gemini ante 429/5xx. Con backoff exponencial (1, 2, 4, 8 s...),
+# 4 intentos esperan unos 15 s como máximo antes de rendirse; con 6 (el valor por defecto
+# del cliente) la pantalla podía quedar quieta más de un minuto. Configurable por entorno.
+MAX_RETRIES = int(os.getenv("GEMINI_MAX_RETRIES", "4"))
+
 _TOOLS = [
     query_rules_rag, execute_dice_roll, switch_and_render_map,
     damage_player, heal_player, set_character, manage_enemy,
@@ -75,7 +81,8 @@ def build_agent():
     Reintentos: `max_retries` se traduce a HttpRetryOptions del SDK de Google, que
     reintenta ante 408/429/5xx con backoff exponencial (1 s hasta 60 s, con jitter).
     Por eso no se usa middleware de reintentos. Límite: un 429 por cuota DIARIA
-    agotada no se recupera reintentando; en ese caso el agente devuelve un error.
+    agotada no se recupera reintentando; en ese caso el agente devuelve un error
+    legible (ver _mensaje_error).
 
     Raises:
         ValueError: si GEMINI_API_KEY no está configurada.
@@ -91,7 +98,7 @@ def build_agent():
         model=MODEL_NAME,
         temperature=0.8,
         google_api_key=api_key,
-        max_retries=6,
+        max_retries=MAX_RETRIES,
         include_thoughts=INCLUDE_THOUGHTS,
         # Verificado con gemini-3.1-flash-lite: include_thoughts SOLO no devuelve nada;
         # hace falta thinking_budget=-1 (pensamiento dinámico) para recibir el bloque
@@ -153,6 +160,44 @@ def _estado_jugador() -> str:
         )
     except Exception:
         return ""
+
+
+def _mensaje_error(e: Exception) -> str:
+    """Traduce un error del proveedor a un mensaje que el jugador pueda entender y accionar."""
+    texto = str(e)
+    if re.search(r"\b429\b|RESOURCE_EXHAUSTED|quota", texto, flags=re.I):
+        return ("Gemini alcanzó su límite de uso (cuota gratuita). Esperá cerca de un minuto y "
+                "volvé a enviar tu mensaje; si se agotó la cuota diaria, probá más tarde.")
+    if re.search(r"API key|API_KEY|PERMISSION_DENIED|UNAUTHENTICATED", texto, flags=re.I):
+        return "La clave de la API de Gemini no es válida o no tiene permisos. Revisá GEMINI_API_KEY en el archivo .env."
+    if re.search(r"NOT_FOUND|\b404\b", texto):
+        return "El modelo configurado no existe para tu cuenta. Probá con otro en GEMINI_MODEL."
+    return f"Error en el Dungeon Master AI: {texto[:300]}"
+
+
+def seed_conversation(thread_id: str, bienvenida: str) -> bool:
+    """
+    Registra en la memoria del hilo la bienvenida que la UI muestra SIN llamar al modelo,
+    para que el agente sepa qué le dijo al jugador. Se guarda como un turno (inicio del
+    jugador + respuesta del DM) para que la conversación siga alternando usuario/modelo.
+
+    Devuelve False si no se pudo; en ese caso la partida funciona igual, solo que el
+    agente no recuerda la bienvenida.
+    """
+    try:
+        get_agent().update_state(
+            {"configurable": {"thread_id": thread_id}},
+            {"messages": [
+                HumanMessage(content="INICIO_DE_PARTIDA: el jugador abre la aplicación."),
+                AIMessage(content=bienvenida),
+            ]},
+            # Sin as_node el grafo queda con el nodo "model" pendiente de ejecutarse.
+            # Declarando que la actualización la hizo "model" el hilo queda en reposo.
+            as_node="model",
+        )
+        return True
+    except Exception:
+        return False
 
 
 def _split_blocks(content) -> tuple[str, str]:
@@ -248,7 +293,7 @@ def stream_agent(user_message: str, thread_id: str = "default") -> Iterator[dict
                        "Intenta reformular tu acción.",
         }
     except Exception as e:
-        yield {"type": "error", "message": f"Error en el Dungeon Master AI: {e}"}
+        yield {"type": "error", "message": _mensaje_error(e)}
 
 
 def run_agent(user_message: str, thread_id: str = "default") -> dict:
