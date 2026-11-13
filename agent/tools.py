@@ -176,7 +176,7 @@ def _parse_and_roll(dice_formula: str) -> dict:
 
 
 @tool
-def execute_dice_roll(dice_formula: str, reason: str, target_dc_or_ac: int = 0) -> str:
+def execute_dice_roll(dice_formula: str, reason: str, target_dc_or_ac: int = 0, roller: str = "") -> str:
     """
     Ejecuta una tirada de dados con la fórmula especificada y retorna el resultado detallado.
 
@@ -192,6 +192,8 @@ def execute_dice_roll(dice_formula: str, reason: str, target_dc_or_ac: int = 0) 
         dice_formula: Fórmula de dados (ej: "1d20+5", "2d6", "4d6kh3")
         reason: Descripción de por qué se hace la tirada (ej: "Ataque con espada larga")
         target_dc_or_ac: CA del objetivo o CD de la salvación (0 = no comparar)
+        roller: Quién tira: "jugador" o el nombre del enemigo (ej: "Goblin"). La interfaz lo usa para
+                mostrar el duelo entre las tiradas del jugador y del enemigo. Vacío si no aplica.
 
     Returns:
         JSON string con el resultado completo de la tirada
@@ -226,6 +228,7 @@ def execute_dice_roll(dice_formula: str, reason: str, target_dc_or_ac: int = 0) 
             "modifier": result["modifier"],
             "total": result["total"],
             "target": target_dc_or_ac if target_dc_or_ac > 0 else None,
+            "roller": roller.strip() or None,
             "success": success,
             "success_text": success_text,
             "display": (
@@ -236,7 +239,8 @@ def execute_dice_roll(dice_formula: str, reason: str, target_dc_or_ac: int = 0) 
         }
 
         veredicto = "" if success is None else (" (éxito)" if success else " (fallo)")
-        _log("dados", f"{reason}: {dice_formula} → {result['total']}{veredicto}")
+        quien = f"{roller.strip()}: " if roller.strip() else ""
+        _log("dados", f"{quien}{reason}: {dice_formula} → {result['total']}{veredicto}")
         return json.dumps(output, ensure_ascii=False)
 
     except ValueError as e:

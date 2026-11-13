@@ -311,50 +311,153 @@ def mostrar_resultado(registro: dict):
         st.code(texto, language=None, wrap_lines=True)
 
 
-def html_dado(registro: dict) -> str:
-    """
-    Tarjeta de una tirada: un d20 que gira, el número grande y, si había dificultad, el veredicto.
-    Devuelve "" si el registro no es una tirada válida.
-    """
+def _datos_dado(registro: dict) -> dict | None:
+    """Resultado de una tirada ya terminada (o None si el registro no es una tirada válida)."""
     datos = _json(registro.get("output", "")) if registro.get("name") == "execute_dice_roll" else None
-    if not datos or "total" not in datos:
-        return ""
-    total, mod = datos["total"], datos.get("modifier", 0)
-    tiradas = datos.get("rolls") or []
-    objetivo, exito = datos.get("target"), datos.get("success")
-    clase = "neutral" if objetivo is None or exito is None else ("ok" if exito else "fail")
-    etiqueta = {"ok": "ÉXITO", "fail": "FALLO"}.get(clase, "")
-    # Natural 20 / natural 1: solo cuando es una tirada de un único d20
-    especial = ""
-    if len(tiradas) == 1 and "d20" in str(datos.get("formula", "")).lower():
-        if tiradas[0] == 20:
-            especial = '<span class="dado-especial">¡CRÍTICO!</span>'
-        elif tiradas[0] == 1:
-            especial = '<span class="dado-especial">¡PIFIA!</span>'
-    calculo = " + ".join(str(t) for t in tiradas) if tiradas else str(total)
+    return datos if datos and "total" in datos else None
+
+
+def _es_jugador(roller) -> bool:
+    """True si quien tiró es el jugador ("jugador", "vos" o el nombre de su personaje)."""
+    r = str(roller or "").strip().lower()
+    if not r:
+        return False
+    try:
+        nombre = str(_sm.get_player_info().get("nombre", "")).strip().lower()
+    except Exception:
+        nombre = ""
+    return r in {"jugador", "player", "vos", "yo", "pj"} or (bool(nombre) and r == nombre)
+
+
+def _bueno_para_vos(datos: dict) -> bool | None:
+    """¿La tirada es una buena noticia para el jugador? Su éxito sí; el éxito del enemigo, no."""
+    exito = datos.get("success")
+    if exito is None or not datos.get("roller"):
+        return None
+    return bool(exito) if _es_jugador(datos["roller"]) else not exito
+
+
+def _cuenta(datos: dict) -> str:
+    tiradas, mod, total = datos.get("rolls") or [], datos.get("modifier", 0), datos["total"]
+    txt = " + ".join(str(t) for t in tiradas) if tiradas else str(total)
     if mod:
-        calculo += f" {'+' if mod > 0 else '−'} {abs(mod)}"
-    calculo += f" = {total}"
-    contra = f" · contra {html.escape(str(objetivo))}" if objetivo is not None else ""
-    razon = html.escape(str(datos.get("reason") or "Tirada de dados"))
-    if etiqueta or especial:
-        veredicto = f'<div class="dado-res">{etiqueta}{especial}</div>'
+        txt += f" {'+' if mod > 0 else '−'} {abs(mod)}"
+    return f"{txt} = {total}"
+
+
+def _especial(datos: dict) -> str:
+    """Natural 20 o natural 1 (solo una tirada de un único d20)."""
+    tiradas = datos.get("rolls") or []
+    if len(tiradas) == 1 and "d20" in str(datos.get("formula", "")).lower():
+        return {20: "¡CRÍTICO!", 1: "¡PIFIA!"}.get(tiradas[0], "")
+    return ""
+
+
+_DADO = '<i class="dd-ic" aria-hidden="true">casino</i>'
+
+
+def html_dado(registro: dict) -> str:
+    """Tirada suelta, en una sola fila compacta: dado que gira, número, qué se tiró y el veredicto."""
+    datos = _datos_dado(registro)
+    if not datos:
+        return ""
+    bueno = _bueno_para_vos(datos)
+    clase = "dd-neutro" if bueno is None and datos.get("success") is None else (
+        "dd-bien" if (bueno if bueno is not None else datos.get("success")) else "dd-mal")
+    exito = datos.get("success")
+    if exito is None:
+        etiqueta = ""
+    elif datos.get("roller") and not _es_jugador(datos["roller"]):
+        etiqueta = "ACIERTA" if exito else "FALLA"
     else:
-        veredicto = ""
-    return (
-        f'<div class="dado-card {clase}"><div class="dado">'
-        '<div class="giro"><i class="hex"></i><i class="hex2"></i><i class="tri"></i><i class="tri2"></i></div>'
-        f'<span class="n">{html.escape(str(total))}</span></div>'
-        f'<div class="dado-info"><div class="dado-razon">{razon}</div>'
-        f'<div class="dado-calc">{html.escape(str(datos.get("formula", "")))} · {calculo}{contra}</div></div>'
-        f'{veredicto}</div>'
-    )
+        etiqueta = "ÉXITO" if exito else "FALLO"
+    especial = _especial(datos)
+    quien = f'{html.escape(str(datos["roller"]))} · ' if datos.get("roller") else ""
+    contra = f" · contra {html.escape(str(datos['target']))}" if datos.get("target") is not None else ""
+    razon = html.escape(str(datos.get("reason") or "Tirada de dados"))
+    chip = f'<span class="dd-res">{etiqueta}{(" · " + especial) if especial else ""}</span>' if (etiqueta or especial) else ""
+    return (f'<div class="dd {clase}">{_DADO}<span class="dd-num">{html.escape(str(datos["total"]))}</span>'
+            f'<div class="dd-txt"><b>{quien}{razon}</b><small>{html.escape(str(datos.get("formula", "")))} · {_cuenta(datos)}{contra}</small></div>'
+            f'{chip}</div>')
 
 
-def mostrar_dado(registro: dict):
-    tarjeta = html_dado(registro)
-    if tarjeta:
-        st.html(tarjeta)
+def html_duelo(reg_a: dict, reg_b: dict) -> str:
+    """Duelo: la tirada del jugador a la izquierda, la del enemigo a la derecha, y quién ganó la ronda."""
+    da, db = _datos_dado(reg_a), _datos_dado(reg_b)
+    jugador, enemigo = (da, db) if _es_jugador(da.get("roller")) else (db, da)
+    nombre_enemigo = html.escape(str(enemigo.get("roller")).strip().capitalize())
+
+    def lado(datos, titulo):
+        bueno = _bueno_para_vos(datos)
+        clase = "dd-bien" if bueno else "dd-mal"
+        esp = _especial(datos)
+        return (f'<div class="dd-lado {clase}"><div class="dd-fila">{_DADO}<span class="dd-num">{html.escape(str(datos["total"]))}</span></div>'
+                f'<small>{titulo} · vs {html.escape(str(datos["target"]))}{(" · " + esp) if esp else ""}</small></div>')
+
+    j_ok, e_ok = bool(jugador["success"]), bool(enemigo["success"])
+    if j_ok and not e_ok:
+        clase, texto = "dd-bien", f"Ganaste la ronda: impactás y {nombre_enemigo} falla"
+    elif not j_ok and e_ok:
+        clase, texto = "dd-mal", f"Perdiste la ronda: fallás y {nombre_enemigo} te impacta"
+    elif j_ok and e_ok:
+        clase, texto = "dd-neutro", f"Se golpean: impactás y {nombre_enemigo} te impacta"
+    else:
+        clase, texto = "dd-neutro", "Ronda sin daño: ambos fallan"
+    return (f'<div class="dd-duelo">{lado(jugador, "Vos")}<span class="dd-vs">VS</span>{lado(enemigo, nombre_enemigo)}'
+            f'<div class="dd-ban {clase}">{texto}</div></div>')
+
+
+def plan_dados(tool_calls: list) -> dict:
+    """
+    Cómo se dibuja cada tirada terminada: índice -> ("solo",), ("oculto",) o ("duelo", índice_del_compañero).
+    Dos tiradas seguidas con distinto "roller" (jugador / enemigo) y ambas con dificultad se juntan en un duelo
+    que se muestra en la posición de la segunda; la primera no se dibuja aparte.
+    """
+    ids = [i for i, r in enumerate(tool_calls) if _datos_dado(r)]
+    plan, n = {}, 0
+    while n < len(ids):
+        i = ids[n]
+        di = _datos_dado(tool_calls[i])
+        sig = ids[n + 1] if n + 1 < len(ids) else None
+        dj = _datos_dado(tool_calls[sig]) if sig is not None else None
+        if (dj and di.get("roller") and dj.get("roller") and di.get("success") is not None
+                and dj.get("success") is not None and _es_jugador(di["roller"]) != _es_jugador(dj["roller"])):
+            plan[i], plan[sig] = ("oculto",), ("duelo", i)
+            n += 2
+        else:
+            plan[i] = ("solo",)
+            n += 1
+    return plan
+
+
+def mostrar_dado(tool_calls: list, idx: int, plan: dict | None = None):
+    """Dibuja la tarjeta de la tirada `idx` según el plan (historial)."""
+    accion = (plan if plan is not None else plan_dados(tool_calls)).get(idx)
+    if accion and accion[0] == "solo":
+        st.html(html_dado(tool_calls[idx]))
+    elif accion and accion[0] == "duelo":
+        st.html(html_duelo(tool_calls[accion[1]], tool_calls[idx]))
+
+
+def dado_en_vivo(tool_calls: list, registro: dict, tools_box, huecos: dict):
+    """
+    Tarjeta de una tirada que acaba de terminar, mientras el agente trabaja. Una tirada suelta se dibuja
+    en un hueco propio; si la siguiente completa un duelo, ese hueco se vacía y el duelo ocupa su lugar.
+    """
+    idx = next((i for i, r in enumerate(tool_calls) if r is registro), None)
+    accion = plan_dados(tool_calls).get(idx)
+    if accion is None:
+        return
+    with tools_box:
+        if accion[0] == "duelo":
+            hueco = huecos.pop(accion[1], None)
+            if hueco is not None:
+                hueco.empty()
+            st.html(html_duelo(tool_calls[accion[1]], registro))
+        elif accion[0] == "solo":
+            hueco = st.empty()
+            hueco.html(html_dado(registro))
+            huecos[idx] = hueco
 
 
 def paso_estatico(registro: dict, abierto: bool):
@@ -362,7 +465,6 @@ def paso_estatico(registro: dict, abierto: bool):
     with st.status(etiqueta_tool(registro), type="step", state=estado_tool(registro), expanded=abierto):
         mostrar_args(registro.get("input", {}))
         mostrar_resultado(registro)
-    mostrar_dado(registro)
 
 
 def renderizar_razonamiento(texto: str, key: str, abierto: bool):
@@ -805,8 +907,10 @@ for idx, mensaje in enumerate(st.session_state.messages):
             # Orden fijo: razonamiento, herramientas (en orden de invocación), respuesta
             if mensaje.get("reasoning"):
                 renderizar_razonamiento(mensaje["reasoning"], key=f"razon_{idx}", abierto=pasos_abiertos)
-            for registro in tool_calls:
+            plan = plan_dados(tool_calls)
+            for n, registro in enumerate(tool_calls):
                 paso_estatico(registro, abierto=pasos_abiertos)
+                mostrar_dado(tool_calls, n, plan)
             with st.container(key=f"narr_{idx}"):
                 st.markdown(texto_de(mensaje["content"]))
             if uso_mapa(tool_calls):
@@ -845,6 +949,7 @@ if prompt := st.chat_input("¿Qué hace tu personaje?", submit_mode="disable"):
         razonamiento, texto, error = "", "", None
         tool_calls: list = []
         pasos: dict = {}        # id de tool_call -> (registro, st.status del paso)
+        huecos_dado: dict = {}  # índice de tirada -> hueco donde está su tarjeta (puede volverse un duelo)
         razon_estado = None     # st.status del razonamiento; se crea con el primer bloque
         razon_texto = None
         t_turno = time.time()
@@ -887,8 +992,7 @@ if prompt := st.chat_input("¿Qué hace tu personaje?", submit_mode="disable"):
                     with estado:
                         mostrar_resultado(registro)
                     estado.update(label=etiqueta_tool(registro), state=estado_tool(registro))
-                    with tools_box:
-                        mostrar_dado(registro)
+                    dado_en_vivo(tool_calls, registro, tools_box, huecos_dado)
 
             elif tipo == "text":
                 texto += ev["text"]
