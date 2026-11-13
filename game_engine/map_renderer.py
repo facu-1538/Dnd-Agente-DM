@@ -1,11 +1,13 @@
 """
-map_renderer.py - Renderizador de Mapa con Niebla de Guerra
-Genera imágenes del dungeon con efectos de niebla de guerra usando Pillow.
+map_renderer.py - Mapa ilustrado del dungeon con niebla de guerra
+Dibuja el mapa como un pergamino con íconos por sala, ruta recorrida, posición del jugador,
+brújula y leyenda, usando Pillow y las ilustraciones de assets/map/.
 """
-from PIL import Image, ImageDraw, ImageFont
-import os
+import math
 import pathlib
-import json
+import random
+
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 # -------------------------------------------------------------------------
 # Layout del Dungeon
@@ -77,247 +79,383 @@ DUNGEON_LAYOUT = {
 # Constantes de renderizado
 # -------------------------------------------------------------------------
 
-MAP_WIDTH = 800
-MAP_HEIGHT = 600
-ROOM_SIZE = 60  # Tamaño de cada sala en píxeles (ancho y alto del rectángulo)
+ASSETS_DIR = pathlib.Path("assets/map")
+SALIDA_ACTUAL = "storage/maps/current_view.png"
+SALIDA_BASE = "storage/maps/base_dungeon.png"
 
-# Colores de los elementos del mapa (R, G, B)
-CORRIDOR_COLOR = (100, 100, 100)        # Gris para los corredores
-ROOM_COLOR = (150, 120, 80)             # Marrón para las salas sin descubrir en el mapa base
-FOG_COLOR = (20, 20, 20)               # Negro casi puro para la niebla de guerra
-DISCOVERED_COLOR = (200, 170, 120)     # Marrón claro para salas descubiertas
-TEXT_COLOR = (255, 255, 255)           # Blanco para el texto de los nombres
+# Lienzo de salida: la proporción 3:2 del pergamino ilustrado.
+ANCHO, ALTO = 1536, 1024
+
+# Las coordenadas del layout (canvas 800x600) se llevan al lienzo con UNA escala uniforme,
+# centradas en (CX, CY): así los íconos conservan su proporción y las salas quedan separadas
+# unos 285 px (un ícono mide 200 px de alto, más ~45 px del nombre debajo). Con estos valores
+# la fila superior arranca en y=180 (debajo del título) y el último nombre termina en y=995;
+# la columna derecha (x > 1250) queda libre para la brújula y la leyenda.
+ESCALA = 1.9
+CX, CY = 768, 565
+ALTO_ICONO = 200
+
+# Paleta (la misma de la interfaz y del PDF)
+TINTA = (42, 35, 32)
+ORO = (201, 162, 39)
+ORO_CLARO = (236, 204, 118)
+CARMESI = (142, 27, 45)
+PERGAMINO = (236, 222, 184)
+PASILLO_BORDE = (74, 48, 32)
+PASILLO_PISO = (190, 160, 108)
+
+# Sala -> ícono (assets/map/). Si falta alguno se dibuja una sala simple en su lugar.
+ICONOS = {
+    "sala_entrada": "icono_entrada.png",
+    "sala_biblioteca": "icono_biblioteca.png",
+    "sala_armeria": "icono_armeria.png",
+    "sala_guardia": "icono_guardia.png",
+    "sala_archivo": "icono_archivo.png",
+    "sala_tesoro": "icono_tesoro.png",
+    "sala_mazmorra": "icono_mazmorra.png",
+    "sala_jefe": "icono_jefe.png",
+}
+
+# Fuentes con serifa, en orden de preferencia (Windows, Linux, macOS). Si ninguna existe se usa
+# la fuente escalable que trae Pillow, así el mapa se ve parecido en cualquier máquina.
+_SERIF_NEGRITA = ["georgiab.ttf", "Georgia Bold.ttf", "timesbd.ttf", "DejaVuSerif-Bold.ttf",
+                  "LiberationSerif-Bold.ttf", "NotoSerif-Bold.ttf"]
+
+
+def _fuente(size: int):
+    """Fuente serif en negrita del tamaño pedido, con respaldo escalable de Pillow."""
+    for nombre in _SERIF_NEGRITA:
+        try:
+            return ImageFont.truetype(nombre, size)
+        except OSError:
+            continue
+    return ImageFont.load_default(size)
+
+
+def _punto(sala: dict) -> tuple:
+    """Centro de una sala en el lienzo, a partir de sus coordenadas del layout."""
+    return (round(CX + (sala["x"] - 400) * ESCALA), round(CY + (sala["y"] - 300) * ESCALA))
+
+
+def _aristas() -> list:
+    """Pasillos del dungeon como pares ordenados, sin repetir."""
+    vistas = set()
+    for sala_id, sala in DUNGEON_LAYOUT.items():
+        for otra in sala["conexiones"]:
+            if otra in DUNGEON_LAYOUT:
+                vistas.add(tuple(sorted((sala_id, otra))))
+    return sorted(vistas)
 
 
 class MapRenderer:
     """
-    Renderizador del mapa del dungeon con efecto de Niebla de Guerra.
-    Genera imágenes PNG del dungeon mostrando solo las salas descubiertas
-    por el jugador y ocultando el resto con niebla.
+    Dibuja el mapa del dungeon como un pergamino ilustrado: íconos por sala, pasillos, la ruta
+    recorrida (con el orden de los tramos), la posición actual del jugador y una niebla que
+    oculta lo que todavía no se exploró, con una brújula y una leyenda.
+
+    Los assets viven en assets/map/. Si falta alguno el mapa se sigue dibujando con una
+    versión simple de esa pieza, nunca se rompe.
     """
 
-    # Instancia única del Singleton
     _instance = None
 
     def __new__(cls):
-        """Implementación del patrón Singleton."""
+        """Singleton."""
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
 
     def __init__(self):
-        """Inicializa el MapRenderer y crea los directorios necesarios."""
-        if hasattr(self, '_initialized'):
+        if hasattr(self, "_initialized"):
             return
-
-        # Crear directorio de mapas si no existe
-        maps_dir = pathlib.Path("storage/maps")
-        maps_dir.mkdir(parents=True, exist_ok=True)
-
+        pathlib.Path("storage/maps").mkdir(parents=True, exist_ok=True)
+        self._cache = {}
         self._initialized = True
 
-    def _get_room_rect(self, sala: dict) -> tuple:
+    # ------------------------------------------------------------------ assets
+
+    def _asset(self, nombre: str):
+        """Imagen RGBA de assets/map/ (se carga una sola vez), o None si no existe."""
+        if nombre not in self._cache:
+            ruta = ASSETS_DIR / nombre
+            try:
+                self._cache[nombre] = Image.open(ruta).convert("RGBA") if ruta.exists() else None
+            except OSError:
+                self._cache[nombre] = None
+        return self._cache[nombre]
+
+    @staticmethod
+    def _cubrir(img: Image.Image, ancho: int, alto: int) -> Image.Image:
+        """Escala y recorta para llenar el lienzo sin deformar ('cover')."""
+        esc = max(ancho / img.width, alto / img.height)
+        img = img.resize((round(img.width * esc), round(img.height * esc)), Image.LANCZOS)
+        x, y = (img.width - ancho) // 2, (img.height - alto) // 2
+        return img.crop((x, y, x + ancho, y + alto))
+
+    def _fondo(self) -> Image.Image:
+        fondo = self._asset("fondo_pergamino.jpg")
+        if fondo is None:
+            return Image.new("RGBA", (ANCHO, ALTO), PERGAMINO + (255,))
+        return self._cubrir(fondo, ANCHO, ALTO)
+
+    def _niebla(self) -> Image.Image:
+        niebla = self._asset("niebla.jpg")
+        if niebla is None:
+            return Image.new("RGBA", (ANCHO, ALTO), (24, 20, 18, 255))
+        return self._cubrir(niebla, ANCHO, ALTO)
+
+    def _icono(self, sala_id: str):
+        """Ícono de la sala escalado a ALTO_ICONO, o None si falta el archivo."""
+        clave = f"escalado:{sala_id}"
+        if clave not in self._cache:
+            ico = self._asset(ICONOS.get(sala_id, ""))
+            if ico is not None:
+                esc = ALTO_ICONO / ico.height
+                ico = ico.resize((round(ico.width * esc), ALTO_ICONO), Image.LANCZOS)
+            self._cache[clave] = ico
+        return self._cache[clave]
+
+    # ----------------------------------------------------------------- dibujo
+
+    @staticmethod
+    def _pasillo(lienzo: Image.Image, a: tuple, b: tuple, tramo=None):
         """
-        Calcula el rectángulo (bounding box) de una sala dado su centro.
+        Pasillo de piedra entre dos salas: borde oscuro y piso claro, con un leve temblor
+        (determinista, según la pareja de puntos) para que parezca dibujado a mano.
+        `tramo=(desde, hasta)` dibuja solo ese segmento (en px, medidos desde `a`): se usa
+        para el arranque de una salida sin explorar, que nace en el borde del ícono.
+        """
+        rng = random.Random(f"{a}{b}")
+        largo = math.dist(a, b)
+        s0, s1 = tramo if tramo else (0.0, largo)
+        n = max(2, int((s1 - s0) / 40))
+        ux, uy = (b[0] - a[0]) / largo, (b[1] - a[1]) / largo
+        nx, ny = -uy, ux
+        pts = []
+        for i in range(n + 1):
+            s = s0 + (s1 - s0) * i / n
+            temblor = 0 if i in (0, n) else rng.uniform(-3, 3)
+            pts.append((a[0] + ux * s + nx * temblor, a[1] + uy * s + ny * temblor))
+        d = ImageDraw.Draw(lienzo)
+        d.line(pts, fill=PASILLO_BORDE + (255,), width=36, joint="curve")
+        d.line(pts, fill=PASILLO_PISO + (255,), width=24, joint="curve")
+
+    @staticmethod
+    def _discontinua(d: ImageDraw.ImageDraw, a, b, color, ancho=7, trazo=24, hueco=15):
+        """Línea discontinua de a a b."""
+        largo = math.dist(a, b)
+        if largo == 0:
+            return
+        ux, uy = (b[0] - a[0]) / largo, (b[1] - a[1]) / largo
+        pos = 0.0
+        while pos < largo:
+            fin = min(pos + trazo, largo)
+            d.line((a[0] + ux * pos, a[1] + uy * pos, a[0] + ux * fin, a[1] + uy * fin), fill=color, width=ancho)
+            pos += trazo + hueco
+
+    def _sala(self, lienzo: Image.Image, sala_id: str, centro: tuple):
+        """Pega el ícono de una sala con su sombra, o una sala simple si falta el asset."""
+        ico = self._icono(sala_id)
+        x, y = centro
+        if ico is None:
+            d = ImageDraw.Draw(lienzo)
+            caja = (x - 95, y - 70, x + 95, y + 70)
+            d.rounded_rectangle(caja, radius=14, fill=(196, 170, 120, 255), outline=PASILLO_BORDE + (255,), width=6)
+            return
+        sombra = Image.new("RGBA", lienzo.size, (0, 0, 0, 0))
+        mascara = Image.new("L", lienzo.size, 0)
+        mascara.paste(ico.getchannel("A").point(lambda v: int(v * 0.55)), (x - ico.width // 2 + 10, y - ico.height // 2 + 16))
+        sombra.putalpha(mascara.filter(ImageFilter.GaussianBlur(11)))
+        sombra_color = Image.new("RGBA", lienzo.size, (30, 20, 10, 255))
+        sombra_color.putalpha(sombra.getchannel("A"))
+        lienzo.alpha_composite(sombra_color)
+        lienzo.alpha_composite(ico, (x - ico.width // 2, y - ico.height // 2))
+
+    def _niebla_de_guerra(self, lienzo: Image.Image, descubiertas: set, todas_visibles: bool) -> Image.Image:
+        """Oscurece lo no explorado con la textura de humo; deja claros las salas y pasillos vistos."""
+        if todas_visibles:
+            return lienzo
+        mascara = Image.new("L", (ANCHO, ALTO), 255)           # 255 = niebla, 0 = despejado
+        dm = ImageDraw.Draw(mascara)
+        for sala_id in descubiertas:
+            x, y = _punto(DUNGEON_LAYOUT[sala_id])
+            dm.ellipse((x - 205, y - 175, x + 205, y + 175), fill=0)
+        for a, b in _aristas():
+            if a in descubiertas and b in descubiertas:
+                dm.line((_punto(DUNGEON_LAYOUT[a]), _punto(DUNGEON_LAYOUT[b])), fill=0, width=150)
+        mascara = mascara.filter(ImageFilter.GaussianBlur(46))
+        niebla = self._niebla()
+        niebla.putalpha(mascara.point(lambda v: int(v * 0.86)))
+        return Image.alpha_composite(lienzo, niebla)
+
+    def _marcador(self, tam: int) -> Image.Image:
+        """Ficha del jugador (asset) o un círculo dorado simple como respaldo."""
+        ficha = self._asset("marcador_jugador.png")
+        if ficha is not None:
+            return ficha.resize((tam, round(tam * ficha.height / ficha.width)), Image.LANCZOS)
+        img = Image.new("RGBA", (tam, tam), (0, 0, 0, 0))
+        d = ImageDraw.Draw(img)
+        d.ellipse((2, 2, tam - 2, tam - 2), fill=CARMESI + (255,), outline=ORO + (255,), width=max(3, tam // 12))
+        return img
+
+    @staticmethod
+    def _texto(d: ImageDraw.ImageDraw, xy, texto, fuente, relleno=ORO_CLARO, ancla="la", contorno=4):
+        """Texto con contorno oscuro, legible tanto sobre pergamino como sobre niebla."""
+        d.text(xy, texto, font=fuente, fill=relleno + (255,), anchor=ancla, stroke_width=contorno,
+               stroke_fill=(24, 16, 10, 255))
+
+    def _componer(self, descubiertas: set, actual, ruta: list, heroe: str, todas_visibles=False) -> Image.Image:
+        lienzo = self._fondo()
+        total = len(DUNGEON_LAYOUT)
+        visibles = set(DUNGEON_LAYOUT) if todas_visibles else descubiertas
+
+        # 1) Pasillos: completos entre salas vistas; un arranque corto hacia las no exploradas
+        for a, b in _aristas():
+            pa, pb = _punto(DUNGEON_LAYOUT[a]), _punto(DUNGEON_LAYOUT[b])
+            if a in visibles and b in visibles:
+                self._pasillo(lienzo, pa, pb)
+            elif a in visibles:
+                self._pasillo(lienzo, pa, pb, (ALTO_ICONO * 0.55, ALTO_ICONO * 0.55 + 85))
+            elif b in visibles:
+                self._pasillo(lienzo, pb, pa, (ALTO_ICONO * 0.55, ALTO_ICONO * 0.55 + 85))
+
+        # 2) Ruta recorrida (por debajo de los íconos, que tapan sus extremos)
+        puntos_ruta = [_punto(DUNGEON_LAYOUT[s]) for s in ruta if s in DUNGEON_LAYOUT]
+        d = ImageDraw.Draw(lienzo)
+        for a, b in zip(puntos_ruta, puntos_ruta[1:]):
+            self._discontinua(d, a, b, CARMESI + (255,))
+
+        # 3) Salas vistas
+        for sala_id in sorted(visibles, key=lambda s: DUNGEON_LAYOUT[s]["y"]):
+            self._sala(lienzo, sala_id, _punto(DUNGEON_LAYOUT[sala_id]))
+
+        # 4) Niebla (los pasillos de arranque quedan bajo ella, como una pista tenue)
+        lienzo = self._niebla_de_guerra(lienzo, descubiertas, todas_visibles)
+        d = ImageDraw.Draw(lienzo)
+
+        # 5) Salidas sin explorar: un "?" donde termina cada pasillo de arranque
+        for sala_id, sala in DUNGEON_LAYOUT.items():
+            if sala_id in visibles:
+                continue
+            if any(otra in visibles for otra in sala["conexiones"]):
+                x, y = _punto(sala)
+                self._texto(d, (x, y), "?", _fuente(104), ancla="mm", contorno=6)
+
+        # 6) Números de la ruta (en el punto medio de cada tramo)
+        usados = {}
+        for orden, (sa, sb) in enumerate(zip(ruta, ruta[1:]), 1):
+            if sa not in DUNGEON_LAYOUT or sb not in DUNGEON_LAYOUT:
+                continue
+            pa, pb = _punto(DUNGEON_LAYOUT[sa]), _punto(DUNGEON_LAYOUT[sb])
+            par = tuple(sorted((sa, sb)))
+            usados[par] = usados.get(par, 0) + 1
+            largo = math.dist(pa, pb) or 1
+            desplaza = (usados[par] - 1) * 40            # los regresos por el mismo pasillo no se pisan
+            # El número va en el medio del tramo; en un pasillo vertical se corre hacia la sala de
+            # abajo (60 %) para no tapar el nombre que está bajo la sala de arriba.
+            t = 0.5
+            if abs(pb[1] - pa[1]) > abs(pb[0] - pa[0]):
+                t = 0.6 if pb[1] > pa[1] else 0.4
+            mx = pa[0] + (pb[0] - pa[0]) * t - (pb[1] - pa[1]) / largo * desplaza
+            my = pa[1] + (pb[1] - pa[1]) * t + (pb[0] - pa[0]) / largo * desplaza
+            d.ellipse((mx - 19, my - 19, mx + 19, my + 19), fill=CARMESI + (255,), outline=ORO + (255,), width=3)
+            d.text((mx, my), str(orden), font=_fuente(24), fill=(255, 255, 255, 255), anchor="mm")
+
+        # 7) Posición actual: resplandor dorado y ficha del jugador
+        if actual in visibles and actual in DUNGEON_LAYOUT:
+            x, y = _punto(DUNGEON_LAYOUT[actual])
+            brillo = Image.new("RGBA", lienzo.size, (0, 0, 0, 0))
+            ImageDraw.Draw(brillo).ellipse((x - 160, y - 135, x + 160, y + 135), fill=ORO + (110,))
+            lienzo.alpha_composite(brillo.filter(ImageFilter.GaussianBlur(32)))
+            ficha = self._marcador(96)
+            lienzo.alpha_composite(ficha, (x + 58, y - 112))
+
+        # 8) Nombres de las salas vistas
+        d = ImageDraw.Draw(lienzo)
+        for sala_id in visibles:
+            sala = DUNGEON_LAYOUT[sala_id]
+            x, y = _punto(sala)
+            self._texto(d, (x, y + ALTO_ICONO // 2 + 6), sala["nombre"], _fuente(31), ancla="ma")
+
+        # 9) Título, brújula y leyenda
+        self._texto(d, (70, 52), "Mapa de la mazmorra", _fuente(56), contorno=5)
+        self._texto(d, (74, 122), f"{heroe}  ·  {len(descubiertas)} de {total} salas exploradas",
+                    _fuente(27), relleno=PERGAMINO, contorno=3)
+        self._brujula_y_leyenda(lienzo, bool(puntos_ruta))
+        return lienzo
+
+    def _brujula_y_leyenda(self, lienzo: Image.Image, hay_ruta: bool):
+        """Columna derecha: brújula arriba y leyenda debajo."""
+        x0, y0, x1, y1 = ANCHO - 290, 340, ANCHO - 28, 590       # 262 px de ancho: caben los textos
+        centro_x = (x0 + x1) // 2
+        bru = self._asset("brujula.png")
+        if bru is not None:
+            bru = bru.resize((176, round(176 * bru.height / bru.width)), Image.LANCZOS)
+            lienzo.alpha_composite(bru, (centro_x - bru.width // 2, 112))
+        d = ImageDraw.Draw(lienzo)
+        self._texto(d, (centro_x, 88), "N", _fuente(38), ancla="mm", contorno=4)
+
+        panel = Image.new("RGBA", lienzo.size, (0, 0, 0, 0))
+        ImageDraw.Draw(panel).rounded_rectangle((x0, y0, x1, y1), radius=18, fill=(22, 16, 12, 205),
+                                                outline=ORO + (255,), width=3)
+        lienzo.alpha_composite(panel)
+        d = ImageDraw.Draw(lienzo)
+        self._texto(d, ((x0 + x1) // 2, y0 + 30), "Leyenda", _fuente(28), ancla="mm", contorno=3)
+        ficha = self._marcador(46)
+        lienzo.alpha_composite(ficha, (x0 + 18, y0 + 62))
+        self._texto(d, (x0 + 78, y0 + 85), "Tu posición", _fuente(22), relleno=PERGAMINO, ancla="lm", contorno=2)
+        self._discontinua(d, (x0 + 18, y0 + 150), (x0 + 64, y0 + 150), CARMESI + (255,), ancho=6, trazo=12, hueco=8)
+        self._texto(d, (x0 + 78, y0 + 150), "Ruta recorrida", _fuente(22), relleno=PERGAMINO, ancla="lm", contorno=2)
+        self._texto(d, (x0 + 41, y0 + 212), "?", _fuente(44), ancla="mm", contorno=4)
+        self._texto(d, (x0 + 78, y0 + 212), "Sin explorar", _fuente(22), relleno=PERGAMINO, ancla="lm", contorno=2)
+
+    # ------------------------------------------------------------- API pública
+
+    def render_fog_of_war(self, discovered_rooms: list, current_room=None, route=None, hero_name=None) -> str:
+        """
+        Dibuja el mapa con niebla de guerra y lo guarda en storage/maps/current_view.png.
 
         Args:
-            sala (dict): Datos de la sala con coordenadas x, y.
+            discovered_rooms: IDs de las salas descubiertas.
+            current_room: sala donde está el jugador. Si se omite, se toma del estado del juego.
+            route: salas recorridas, en orden. Si se omite, se toma del estado del juego.
+            hero_name: nombre del personaje para el título. Si se omite, se toma del estado.
 
         Returns:
-            tuple: (x0, y0, x1, y1) coordenadas del rectángulo de la sala.
-        """
-        half = ROOM_SIZE // 2
-        x0 = sala["x"] - half
-        y0 = sala["y"] - half
-        x1 = sala["x"] + half
-        y1 = sala["y"] + half
-        return (x0, y0, x1, y1)
-
-    def _load_font(self, size: int = 10):
-        """
-        Carga una fuente para el texto del mapa.
-        Intenta cargar fuente del sistema; si falla, usa la fuente por defecto de Pillow.
-
-        Args:
-            size (int): Tamaño de la fuente.
-
-        Returns:
-            ImageFont: La fuente cargada.
+            Ruta de la imagen generada.
         """
         try:
-            # Intentar cargar fuente del sistema
-            return ImageFont.truetype("arial.ttf", size)
-        except (IOError, OSError):
-            try:
-                # Intentar con ruta absoluta en Windows
-                return ImageFont.truetype("C:/Windows/Fonts/arial.ttf", size)
-            except (IOError, OSError):
-                # Usar fuente por defecto de Pillow si no hay fuentes del sistema
-                return ImageFont.load_default()
+            from game_engine.state_manager import get_state_manager
+            estado = get_state_manager().get_state()
+            current_room = current_room or estado["sala_actual"]
+            route = estado["ruta"] if route is None else route
+            hero_name = hero_name or estado["jugador"]["nombre"]
+        except Exception:
+            route = route or []
+            hero_name = hero_name or "Aventurero"
+
+        descubiertas = {s for s in discovered_rooms if s in DUNGEON_LAYOUT}
+        lienzo = self._componer(descubiertas, current_room, route, hero_name)
+        lienzo.convert("RGB").save(SALIDA_ACTUAL, compress_level=3)
+        return SALIDA_ACTUAL
 
     def generate_base_map(self) -> str:
-        """
-        Genera el mapa base del dungeon con todas las salas visibles.
-        Este mapa se usa como base para aplicar la niebla de guerra.
-
-        Returns:
-            str: Ruta al archivo de imagen generado (storage/maps/base_dungeon.png).
-        """
-        # Crear imagen RGB negra de 800x600
-        img = Image.new("RGB", (MAP_WIDTH, MAP_HEIGHT), color=(10, 10, 10))
-        draw = ImageDraw.Draw(img)
-
-        # Cargar fuente para los nombres de las salas
-        font = self._load_font(size=10)
-
-        # Paso 1: Dibujar corredores (líneas entre salas conectadas)
-        # Usamos un conjunto para evitar dibujar el mismo corredor dos veces
-        corredores_dibujados = set()
-        for sala_id, sala in DUNGEON_LAYOUT.items():
-            for conexion_id in sala["conexiones"]:
-                # Crear un par ordenado para identificar el corredor de forma única
-                par = tuple(sorted([sala_id, conexion_id]))
-                if par not in corredores_dibujados and conexion_id in DUNGEON_LAYOUT:
-                    sala_origen = DUNGEON_LAYOUT[sala_id]
-                    sala_destino = DUNGEON_LAYOUT[conexion_id]
-                    # Dibujar línea de corredor entre los centros de las salas
-                    draw.line(
-                        [(sala_origen["x"], sala_origen["y"]),
-                         (sala_destino["x"], sala_destino["y"])],
-                        fill=CORRIDOR_COLOR,
-                        width=8
-                    )
-                    corredores_dibujados.add(par)
-
-        # Paso 2: Dibujar rectángulos de salas sobre los corredores
-        for sala_id, sala in DUNGEON_LAYOUT.items():
-            rect = self._get_room_rect(sala)
-            # Rectángulo de fondo de la sala
-            draw.rectangle(rect, fill=ROOM_COLOR, outline=(200, 180, 100), width=2)
-
-            # Nombre de la sala centrado sobre el rectángulo
-            nombre = sala["nombre"]
-            # Calcular posición centrada del texto
-            bbox = draw.textbbox((0, 0), nombre, font=font)
-            text_width = bbox[2] - bbox[0]
-            text_height = bbox[3] - bbox[1]
-            text_x = sala["x"] - text_width // 2
-            text_y = sala["y"] - text_height // 2
-            draw.text((text_x, text_y), nombre, fill=TEXT_COLOR, font=font)
-
-        # Paso 3: Agregar título al mapa
-        titulo_font = self._load_font(size=14)
-        draw.text((10, 10), "⚔ Dungeon Map", fill=(220, 180, 60), font=titulo_font)
-
-        # Guardar imagen del mapa base
-        ruta_mapa = "storage/maps/base_dungeon.png"
-        img.save(ruta_mapa)
-        return ruta_mapa
-
-    def render_fog_of_war(self, discovered_rooms: list) -> str:
-        """
-        Renderiza el mapa con efecto de Niebla de Guerra.
-        Las salas no descubiertas se cubren con una capa oscura semitransparente.
-
-        Args:
-            discovered_rooms (list): Lista de IDs de salas descubiertas por el jugador.
-
-        Returns:
-            str: Ruta al archivo de imagen con niebla (storage/maps/current_view.png).
-        """
-        ruta_base = "storage/maps/base_dungeon.png"
-
-        # Generar mapa base si no existe
-        if not pathlib.Path(ruta_base).exists():
-            self.generate_base_map()
-
-        # Cargar mapa base
-        img_base = Image.open(ruta_base).convert("RGBA")
-
-        # Crear capa de niebla semitransparente negra (alpha=200 de 255)
-        # Alpha 200 = niebla muy densa pero no completamente opaca
-        capa_niebla = Image.new("RGBA", (MAP_WIDTH, MAP_HEIGHT), (FOG_COLOR[0], FOG_COLOR[1], FOG_COLOR[2], 200))
-        draw_niebla = ImageDraw.Draw(capa_niebla)
-
-        # Para cada sala NO descubierta, dejar la niebla
-        # Para cada sala descubierta, "borrar" la niebla haciendo esa área transparente
-        for sala_id, sala in DUNGEON_LAYOUT.items():
-            if sala_id in discovered_rooms:
-                # Sala descubierta: borrar la niebla en esta área
-                rect = self._get_room_rect(sala)
-                # Expandir el área revelada para incluir los corredores cercanos
-                expansion = ROOM_SIZE // 2
-                rect_expandido = (
-                    rect[0] - expansion,
-                    rect[1] - expansion,
-                    rect[2] + expansion,
-                    rect[3] + expansion
-                )
-                # Pintar con transparencia total para "quitar" la niebla
-                draw_niebla.rectangle(rect_expandido, fill=(0, 0, 0, 0))
-
-                # También revelar los corredores hacia salas también descubiertas
-                for conexion_id in sala["conexiones"]:
-                    if conexion_id in discovered_rooms and conexion_id in DUNGEON_LAYOUT:
-                        sala_destino = DUNGEON_LAYOUT[conexion_id]
-                        # Dibujar línea de corredor sin niebla
-                        draw_niebla.line(
-                            [(sala["x"], sala["y"]),
-                             (sala_destino["x"], sala_destino["y"])],
-                            fill=(0, 0, 0, 0),
-                            width=12
-                        )
-
-        # Aplicar composite: mapa base + capa de niebla
-        img_final = Image.alpha_composite(img_base, capa_niebla)
-
-        # Agregar borde a las salas descubiertas para resaltarlas
-        draw_final = ImageDraw.Draw(img_final)
-        font = self._load_font(size=10)
-        for sala_id in discovered_rooms:
-            if sala_id in DUNGEON_LAYOUT:
-                sala = DUNGEON_LAYOUT[sala_id]
-                rect = self._get_room_rect(sala)
-                # Sala descubierta con color más brillante y borde dorado
-                draw_final.rectangle(rect, fill=DISCOVERED_COLOR + (255,), outline=(255, 215, 0), width=2)
-
-                # Volver a dibujar el nombre de la sala descubierta
-                nombre = sala["nombre"]
-                bbox = draw_final.textbbox((0, 0), nombre, font=font)
-                text_width = bbox[2] - bbox[0]
-                text_height = bbox[3] - bbox[1]
-                text_x = sala["x"] - text_width // 2
-                text_y = sala["y"] - text_height // 2
-                draw_final.text((text_x, text_y), nombre, fill=TEXT_COLOR, font=font)
-
-        # Convertir a RGB para guardar como PNG sin canal alpha
-        img_rgb = img_final.convert("RGB")
-
-        # Guardar la vista actual del mapa
-        ruta_actual = "storage/maps/current_view.png"
-        img_rgb.save(ruta_actual)
-        return ruta_actual
+        """Mapa completo, sin niebla (útil para depurar o para mostrar el dungeon entero)."""
+        lienzo = self._componer(set(DUNGEON_LAYOUT), None, [], "Dungeon completo", todas_visibles=True)
+        lienzo.convert("RGB").save(SALIDA_BASE, compress_level=3)
+        return SALIDA_BASE
 
     def get_current_map_path(self) -> str:
-        """
-        Obtiene la ruta al mapa actual del jugador.
-        Si existe current_view.png, lo retorna. Si no, genera el mapa base.
-
-        Returns:
-            str: Ruta al archivo de mapa más reciente disponible.
-        """
-        ruta_actual = "storage/maps/current_view.png"
-        if pathlib.Path(ruta_actual).exists():
-            return ruta_actual
-        # Si no existe la vista actual, generar el mapa base
-        return self.generate_base_map()
+        """Ruta del mapa actual; si todavía no existe, lo dibuja con la partida en curso."""
+        if pathlib.Path(SALIDA_ACTUAL).exists():
+            return SALIDA_ACTUAL
+        try:
+            from game_engine.state_manager import get_state_manager
+            return self.render_fog_of_war(get_state_manager().get_discovered_rooms())
+        except Exception:
+            return self.generate_base_map()
 
 
 def get_map_renderer() -> MapRenderer:
-    """
-    Función de acceso al Singleton de MapRenderer.
-
-    Returns:
-        MapRenderer: La instancia única del renderizador de mapas.
-    """
+    """Acceso al Singleton de MapRenderer."""
     return MapRenderer()
