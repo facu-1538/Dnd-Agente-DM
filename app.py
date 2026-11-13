@@ -1,16 +1,23 @@
 """
-app.py - Interfaz de Usuario del Dungeon Master AI
-Aplicación Streamlit para el sistema D&D 5e AI Dungeon Master
+app.py - Interfaz del Dungeon Master AI (Streamlit)
 
-Este módulo implementa la interfaz gráfica completa usando Streamlit,
-conectando al agente LangGraph y mostrando el estado del juego en tiempo real.
+Chat con el agente D&D 5e. Muestra en vivo (streaming) qué hace el agente:
+  1. su razonamiento (bloque diferenciado y plegable),
+  2. cada herramienta invocada, en orden, con argumentos y resumen del resultado,
+  3. la respuesta final del Dungeon Master.
+Panel lateral con el estado del personaje y el mapa (exportable como PNG).
+
+Estilo: el tema (colores, fuentes, radios) está en .streamlit/config.toml y solo la
+tipografía de lectura de la narración está en ui/style.css.
 """
 
-import streamlit as st
+import json
 import os
-import sys
+import re
 import uuid
 from pathlib import Path
+
+import streamlit as st
 from dotenv import load_dotenv
 
 # Cargar variables de entorno desde .env
@@ -20,167 +27,32 @@ load_dotenv()
 # CONFIGURACIÓN DE PÁGINA (debe ser lo primero que se llama en Streamlit)
 # ---------------------------------------------------------------------------
 st.set_page_config(
-    page_title="⚔️ D&D AI Dungeon Master",
-    page_icon="⚔️",
-    layout="wide",
-    initial_sidebar_state="expanded"
+    page_title="Dungeon Master AI",
+    page_icon=":material/swords:",
+    layout="centered",
+    initial_sidebar_state="expanded",
 )
 
-# ---------------------------------------------------------------------------
-# CSS PERSONALIZADO — Estética de mazmorra oscura con toques dorados
-# ---------------------------------------------------------------------------
-st.markdown("""
-<style>
-
-    @import url('https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@400;600&display=swap');
-
-    [data-testid="stChatMessage"] [data-testid="stMarkdownContainer"],
-    [data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] p,
-    [data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] li,
-    div[data-testid="stChatInput"] textarea {
-        font-family: 'Pixelify Sans', 'Courier New', monospace !important;
-        font-size: 1.2rem;
-        letter-spacing: 0.3px;
-        line-height: 1.5;
-        color: #ffe066 !important;
-    }
-    /* ---- Fondo general ---- */
-    .stApp {
-        background-color: #1a1a2e;
-        color: #e0d7c6;
-    }
-
-    /* ---- Sidebar ---- */
-    [data-testid="stSidebar"] {
-        background-color: #16213e;
-        border-right: 2px solid #8b0000;
-    }
-    [data-testid="stSidebar"] * {
-        color: #e0d7c6 !important;
-    }
-
-    /* ---- Título principal ---- */
-    h1 {
-        color: #ffd700 !important;
-        font-family: 'Georgia', 'Times New Roman', serif;
-        text-shadow: 2px 2px 8px rgba(139, 0, 0, 0.8);
-        letter-spacing: 2px;
-    }
-
-    /* ---- Subtítulos ---- */
-    h2, h3, h4 {
-        color: #c9a84c !important;
-        font-family: 'Georgia', serif;
-    }
-
-    /* ---- Mensajes de chat — asistente (DM) ---- */
-    [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatar-assistant"]) {
-        background-color: #0f3460 !important;
-        border-left: 4px solid #8b0000;
-        border-radius: 8px;
-        padding: 12px;
-        margin: 8px 0;
-    }
-
-    /* ---- Mensajes de chat — usuario ---- */
-    [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatar-user"]) {
-        background-color: #1f4068 !important;
-        border-left: 4px solid #ffd700;
-        border-radius: 8px;
-        padding: 12px;
-        margin: 8px 0;
-    }
-
-    /* ---- Input de chat ---- */
-    [data-testid="stChatInput"] {
-        background-color: #16213e;
-        border: 2px solid #8b0000;
-        border-radius: 8px;
-        color: #e0d7c6;
-    }
-    [data-testid="stChatInput"] textarea {
-        color: #e0d7c6 !important;
-    }
-
-    /* ---- Botones ---- */
-    .stButton > button {
-        background-color: #8b0000;
-        color: #ffd700;
-        border: 1px solid #ffd700;
-        border-radius: 6px;
-        font-family: 'Georgia', serif;
-        font-weight: bold;
-        transition: all 0.3s;
-    }
-    .stButton > button:hover {
-        background-color: #ffd700;
-        color: #1a1a2e;
-        border-color: #8b0000;
-    }
-
-    /* ---- Métricas (HP) ---- */
-    [data-testid="stMetric"] {
-        background-color: #0f3460;
-        border: 1px solid #8b0000;
-        border-radius: 8px;
-        padding: 8px;
-    }
-    [data-testid="stMetricValue"] {
-        color: #ff4444 !important;
-        font-size: 2rem !important;
-        font-weight: bold !important;
-    }
-    [data-testid="stMetricLabel"] {
-        color: #e0d7c6 !important;
-    }
-
-    /* ---- Barra de progreso (vida) ---- */
-    .stProgress > div > div {
-        background-color: #8b0000 !important;
-    }
-
-    /* ---- Expanders (tool calls) ---- */
-    [data-testid="stExpander"] {
-        background-color: #0f3460;
-        border: 1px solid #c9a84c;
-        border-radius: 6px;
-    }
-
-    /* ---- Caption / subtexto ---- */
-    .stCaption {
-        color: #c9a84c !important;
-    }
-
-    /* ---- Alertas ---- */
-    .stAlert {
-        border-radius: 8px;
-    }
-
-    /* ---- Separadores ---- */
-    hr {
-        border-color: #8b0000;
-    }
-
-    /* ---- Scroll del chat ---- */
-    .main .block-container {
-        padding-bottom: 100px;
-    }
-</style>
-""", unsafe_allow_html=True)
+# Tipografía de lectura de la narración (el resto del estilo vive en config.toml)
+_css = Path(__file__).parent / "ui" / "style.css"
+if _css.exists():
+    st.html(f"<style>{_css.read_text(encoding='utf-8')}</style>")
 
 # ---------------------------------------------------------------------------
 # VERIFICACIÓN DE API KEY — Detenemos la app si no está configurada
 # ---------------------------------------------------------------------------
 if not os.getenv("GEMINI_API_KEY"):
-    st.error("⚠️ **GEMINI_API_KEY** no configurada. Edita el archivo `.env` y agrega tu clave de API.")
-    st.info("💡 Obtén tu clave en: https://aistudio.google.com/app/apikey")
+    st.error(
+        "Editá el archivo `.env` y agregá tu clave de API.",
+        title="GEMINI_API_KEY no configurada",
+        icon=":material/key:",
+    )
+    st.caption("Obtené una clave en https://aistudio.google.com/app/apikey")
     st.stop()
 
 # ---------------------------------------------------------------------------
 # IMPORTACIONES DE MÓDULOS PROPIOS (después de verificar la API key)
 # ---------------------------------------------------------------------------
-
-# Importar el motor de juego con manejo de errores
 try:
     from game_engine.state_manager import get_state_manager
     _state_manager_available = True
@@ -188,7 +60,6 @@ except ImportError as e:
     _state_manager_available = False
     _state_manager_error = str(e)
 
-# Importar el agente principal con manejo de errores
 try:
     from agent.core import run_agent, stream_agent, clear_conversation
     _agent_available = True
@@ -200,25 +71,33 @@ except ImportError as e:
 _vector_db_path = Path("storage/vector_db")
 _vectorstore_available = _vector_db_path.exists() and any(_vector_db_path.iterdir())
 
-# ---------------------------------------------------------------------------
-# INICIALIZACIÓN DEL SESSION STATE
-# ---------------------------------------------------------------------------
+MAPA_PATH = Path("storage/maps/current_view.png")
 
-# Lista de mensajes del historial de la partida
+# ---------------------------------------------------------------------------
+# SESSION STATE
+# ---------------------------------------------------------------------------
 if "messages" not in st.session_state:
-    st.session_state.messages = []
+    st.session_state.messages = []          # historial visible de la partida
 
-# ID de hilo único por sesión (para la memoria del agente LangGraph)
 if "thread_id" not in st.session_state:
-    st.session_state.thread_id = str(uuid.uuid4())
+    st.session_state.thread_id = str(uuid.uuid4())   # hilo de memoria del agente
 
-# Flag para saber si se mostró el mensaje de bienvenida
 if "welcomed" not in st.session_state:
     st.session_state.welcomed = False
 
 # ---------------------------------------------------------------------------
-# FUNCIONES AUXILIARES
+# PRESENTACIÓN DE HERRAMIENTAS
 # ---------------------------------------------------------------------------
+
+# nombre de la tool -> (icono Material con color, título legible)
+TOOL_UI = {
+    "query_rules_rag": (":blue[:material/menu_book:]", "Consulta de reglas"),
+    "execute_dice_roll": (":orange[:material/casino:]", "Tirada de dados"),
+    "switch_and_render_map": (":green[:material/map:]", "Mapa del dungeon"),
+    "damage_player": (":red[:material/heart_broken:]", "Daño al jugador"),
+    "heal_player": (":green[:material/healing:]", "Curación"),
+}
+
 
 def texto_de(contenido) -> str:
     """Extrae solo el texto de la respuesta, sea string o lista de bloques."""
@@ -235,76 +114,115 @@ def texto_de(contenido) -> str:
     return str(contenido)
 
 
-def renderizar_tool_calls(tool_calls: list):
-    """
-    Muestra las llamadas a herramientas en expanders con íconos temáticos.
-    Se llama dentro del contexto de un st.chat_message.
-    """
-    for tc in tool_calls:
-        nombre = tc.get("name", "herramienta")
-        entrada = tc.get("input", {})
-        salida = tc.get("output", "")
-
-        # Elegir ícono y título según la herramienta
-        if "rag" in nombre or "rules" in nombre or "query" in nombre:
-            icono = "📚"
-            titulo = "Consultando base de conocimientos..."
-        elif "dice" in nombre or "roll" in nombre:
-            icono = "🎲"
-            titulo = f"Tirando dados..."
-        elif "map" in nombre or "render" in nombre:
-            icono = "🗺️"
-            titulo = "Actualizando mapa del dungeon..."
-        else:
-            icono = "⚙️"
-            titulo = f"Ejecutando: {nombre}"
-
-        with st.expander(f"{icono} {titulo} · {nombre}", expanded=False):
-            if entrada:
-                st.markdown("**Parámetros:**")
-                # Mostrar parámetros de forma legible
-                for clave, valor in entrada.items():
-                    st.markdown(f"- `{clave}`: `{valor}`")
-
-            if salida:
-                st.markdown("**Resultado:**")
-                # Si es una tirada de dados, formatear bonito
-                if "dice" in nombre or "roll" in nombre:
-                    try:
-                        import json
-                        resultado = json.loads(salida) if isinstance(salida, str) else salida
-                        if isinstance(resultado, dict):
-                            total = resultado.get("total", resultado.get("result", "?"))
-                            rolls = resultado.get("rolls", [])
-                            formula = resultado.get("formula", entrada.get("formula", ""))
-                            st.markdown(f"🎲 **Fórmula:** `{formula}`")
-                            if rolls:
-                                st.markdown(f"🎯 **Dados:** {rolls}")
-                            st.markdown(f"✨ **Total:** `{total}`")
-                        else:
-                            st.code(str(salida))
-                    except Exception:
-                        st.code(str(salida))
-                else:
-                    # Truncar respuestas largas del RAG
-                    texto = str(salida)
-                    if len(texto) > 500:
-                        st.markdown(texto[:500] + "...")
-                    else:
-                        st.markdown(texto)
+def _json(salida: str):
+    """Parsea la salida de una tool si es un JSON de objeto; si no, devuelve None."""
+    try:
+        datos = json.loads(salida)
+        return datos if isinstance(datos, dict) else None
+    except (TypeError, ValueError):
+        return None
 
 
-def boton_descarga_mapa(key: str):
-    """Botón para descargar el mapa actual (PNG). `key` debe ser único en toda la página."""
-    mapa = Path("storage/maps/current_view.png")
-    if mapa.exists():
-        st.download_button(
-            "⬇️ Descargar mapa (PNG)",
-            data=mapa.read_bytes(),
-            file_name="mapa_dungeon.png",
-            mime="image/png",
-            key=key,
-        )
+def es_error(salida: str) -> bool:
+    """Heurística: las tools devuelven '❌'/'⚠️' o un JSON con clave 'error' al fallar."""
+    if not salida:
+        return False
+    if salida.lstrip().startswith(("❌", "⚠️")):
+        return True
+    datos = _json(salida)
+    return bool(datos and "error" in datos)
+
+
+def resumen_tool(registro: dict) -> str:
+    """Resumen de una línea del resultado de una tool (se muestra en el título del paso)."""
+    nombre, salida = registro.get("name", ""), registro.get("output", "")
+    if not salida:
+        return ""
+    datos = _json(salida)
+    try:
+        if nombre == "execute_dice_roll" and datos and "total" in datos:
+            r = f"{datos.get('formula')} → {datos['total']}"
+            if datos.get("success") is True:
+                r += " · éxito"
+            elif datos.get("success") is False:
+                r += " · fallo"
+            return r
+        if nombre == "damage_player" and datos and "nuevo_hp" in datos:
+            return f"−{datos.get('danio')} HP ({datos.get('hp_anterior')} → {datos['nuevo_hp']})"
+        if nombre == "heal_player" and datos and "nuevo_hp" in datos:
+            return f"+{datos.get('curacion')} HP ({datos.get('hp_anterior')} → {datos['nuevo_hp']})"
+        if nombre == "query_rules_rag":
+            fuentes = re.findall(r"^\[(.+?)\]", salida, flags=re.M)
+            if fuentes:
+                return f"{len(fuentes)} fragmentos · {fuentes[0]}"
+        if datos and "error" in datos:
+            return "error"
+    except Exception:
+        pass
+    primera = next((l for l in salida.splitlines() if l.strip()), "")
+    # Quita emojis/símbolos iniciales: se conserva desde la primera letra o dígito latino
+    primera = re.sub(r"^[^A-Za-zÀ-ÿ0-9]+", "", primera.replace("*", ""))
+    return primera.strip()[:80]
+
+
+def etiqueta_tool(registro: dict) -> str:
+    """Título del paso: icono de color, nombre legible y resumen del resultado."""
+    nombre = registro.get("name", "tool")
+    icono, titulo = TOOL_UI.get(nombre, (":gray[:material/build:]", nombre))
+    resumen = resumen_tool(registro)
+    return f"{icono} **{titulo}**" + (f" · {resumen}" if resumen else "")
+
+
+def estado_tool(registro: dict) -> str:
+    salida = registro.get("output", "")
+    if not salida:
+        return "running"
+    return "error" if es_error(salida) else "complete"
+
+
+def mostrar_args(entrada: dict):
+    """Argumentos con los que se invocó la tool."""
+    if entrada:
+        st.caption("Argumentos")
+        st.code(json.dumps(entrada, ensure_ascii=False, indent=2), language="json")
+
+
+def mostrar_resultado(registro: dict):
+    """Resultado de la tool, con formato propio para las tiradas de dados."""
+    nombre, salida = registro.get("name", ""), registro.get("output", "")
+    if not salida:
+        return
+    st.caption("Resultado")
+    datos = _json(salida)
+    if nombre == "execute_dice_roll" and datos and "total" in datos:
+        mod = datos.get("modifier", 0)
+        linea = f"Dados `{datos.get('rolls')}` · modificador `{mod:+d}` · total **{datos['total']}**"
+        if datos.get("target"):
+            veredicto = ":green[éxito]" if datos.get("success") else ":red[fallo]"
+            linea += f" · contra {datos['target']}: {veredicto}"
+        st.markdown(linea)
+        if datos.get("reason"):
+            st.caption(datos["reason"])
+    elif datos is not None:
+        st.code(json.dumps(datos, ensure_ascii=False, indent=2), language="json")
+    else:
+        # Texto de RAG o del mapa: acotado para no ocupar toda la pantalla
+        texto = salida if len(salida) <= 700 else salida[:700] + "…"
+        st.code(texto, language=None, wrap_lines=True)
+
+
+def paso_estatico(registro: dict):
+    """Paso de herramienta ya terminado (historial)."""
+    with st.status(etiqueta_tool(registro), type="step", state=estado_tool(registro), expanded=False):
+        mostrar_args(registro.get("input", {}))
+        mostrar_resultado(registro)
+
+
+def renderizar_razonamiento(texto: str, key: str):
+    """Razonamiento del modelo (historial): plegado y diferenciado de la respuesta."""
+    with st.expander(":violet[:material/psychology:] Razonamiento", type="compact"):
+        with st.container(key=key):      # key "razon_*": estilo apagado en ui/style.css
+            st.markdown(texto)
 
 
 def uso_mapa(tool_calls: list) -> bool:
@@ -312,47 +230,43 @@ def uso_mapa(tool_calls: list) -> bool:
     return any(tc.get("name") == "switch_and_render_map" for tc in tool_calls)
 
 
-def renderizar_razonamiento(texto: str):
-    """Muestra el razonamiento del modelo (historial), diferenciado de la respuesta final."""
-    with st.expander("🧠 Razonamiento del modelo", expanded=False):
-        st.markdown(texto)
+def boton_descarga_mapa(key: str):
+    """Botón para exportar el mapa actual (PNG). `key` debe ser único en la página."""
+    if MAPA_PATH.exists():
+        st.download_button(
+            "Descargar mapa",
+            data=MAPA_PATH.read_bytes(),
+            file_name="mapa_dungeon.png",
+            mime="image/png",
+            icon=":material/download:",
+            key=key,
+        )
 
 
 def nueva_partida():
-    """
-    Reinicia el estado del juego y limpia el historial de mensajes.
-    """
-    # Liberar la memoria (checkpointer) del hilo anterior
+    """Reinicia el estado del juego, la memoria del agente y el historial visible."""
     if _agent_available:
         try:
-            clear_conversation(st.session_state.thread_id)
+            clear_conversation(st.session_state.thread_id)   # libera el checkpointer
         except Exception:
             pass
 
-    # Limpiar el historial de chat
     st.session_state.messages = []
     st.session_state.welcomed = False
     st.session_state.thread_id = str(uuid.uuid4())
 
-    # Reiniciar el estado del motor de juego
     if _state_manager_available:
         try:
-            sm = get_state_manager()
-            sm.reset_state()
+            get_state_manager().reset_state()
         except Exception as e:
-            st.sidebar.warning(f"No se pudo reiniciar el estado: {e}")
-
-    st.rerun()
+            st.toast(f"No se pudo reiniciar el estado: {e}", icon=":material/error:")
+    # No hace falta st.rerun(): se usa como callback on_click y Streamlit re-ejecuta solo.
 
 
 # ---------------------------------------------------------------------------
-# SIDEBAR — Estado del Personaje
+# SIDEBAR — Personaje y mapa (compacto: debe verse completo sin scroll)
 # ---------------------------------------------------------------------------
-
 with st.sidebar:
-    st.title("⚔️ Estado del Personaje")
-    st.markdown("---")
-
     if _state_manager_available:
         state_manager = get_state_manager()
         try:
@@ -364,246 +278,196 @@ with st.sidebar:
             hp, max_hp, info = None, None, {}
 
         if hp is not None and max_hp:
-            st.metric("❤️ Puntos de Vida", f"{hp} / {max_hp}")
+            st.markdown(f"#### :orange[:material/shield_person:] {info.get('nombre', 'Aventurero')}")
+            st.caption(f"{info.get('clase', '?')} · Nivel {info.get('nivel', '?')}")
+
+            st.markdown(f":red[:material/favorite:] **Vida** &nbsp; {hp} / {max_hp}")
             st.progress(max(0.0, min(1.0, hp / max_hp)))
 
-            st.caption(
-                f"{info.get('nombre', 'Aventurero')} · "
-                f"{info.get('clase', '?')} · Nivel {info.get('nivel', '?')}"
-            )
-            st.write(f"💰 Oro: {info.get('oro', 0)}")
-            st.write(f"⭐ Experiencia: {info.get('experiencia', 0)}")
+            col_oro, col_xp = st.columns(2)
+            col_oro.markdown(f":orange[:material/paid:] **{info.get('oro', 0)}** oro")
+            col_xp.markdown(f":violet[:material/auto_awesome:] **{info.get('experiencia', 0)}** XP")
 
-        # --- Enemigos activos ---
-        st.markdown("---")
-        st.subheader("👹 Enemigos Activos")
+        # Enemigos: solo ocupan lugar si hay combate
         try:
             npcs = state_manager.get_active_npcs()
         except Exception:
             npcs = {}
-
         if npcs:
+            st.markdown("#### :red[:material/skull:] Enemigos")
             for nombre_npc, datos_npc in npcs.items():
                 hp_npc = datos_npc.get("hp", "?")
                 max_hp_npc = datos_npc.get("max_hp", hp_npc)
-                st.markdown(f"**{nombre_npc}** — ❤️ {hp_npc}/{max_hp_npc}")
+                st.markdown(f"**{nombre_npc}** · {hp_npc}/{max_hp_npc}")
                 if isinstance(hp_npc, (int, float)) and isinstance(max_hp_npc, (int, float)) and max_hp_npc > 0:
                     st.progress(max(0.0, min(1.0, hp_npc / max_hp_npc)))
         else:
-            st.markdown("*No hay enemigos en combate*")
+            st.caption(":gray[:material/shield:] Sin enemigos en combate")
     else:
-        # Estado por defecto si el módulo no está disponible
-        st.warning(f"⚠️ Motor de juego no disponible:\n`{_state_manager_error}`")
-        st.metric(label="❤️ Puntos de Vida", value="N/A")
+        st.warning(f"Motor de juego no disponible: `{_state_manager_error}`")
 
-    st.markdown("---")
-
-    # --- Mapa del Dungeon ---
-    st.subheader("🗺️ Mapa del Dungeon")
-    mapa_path = Path("storage/maps/current_view.png")
-    if mapa_path.exists():
-        st.image(str(mapa_path), width="stretch", caption="Vista actual del dungeon")
-        # Exportar el mapa: es el producto tangible de la partida
-        st.download_button(
-            "⬇️ Descargar mapa (PNG)",
-            data=mapa_path.read_bytes(),
-            file_name="mapa_dungeon.png",
-            mime="image/png",
-            width="stretch",
-            key="descargar_mapa",
-        )
+    # --- Mapa del dungeon (producto tangible de la partida) ---
+    st.markdown("#### :green[:material/map:] Mapa")
+    if MAPA_PATH.exists():
+        st.image(str(MAPA_PATH), width="stretch", alt="Mapa del dungeon con las salas exploradas")
+        boton_descarga_mapa("descargar_mapa")
     else:
-        st.markdown("""
-<div style="
-    background: #0f3460;
-    border: 2px dashed #8b0000;
-    border-radius: 8px;
-    padding: 20px;
-    text-align: center;
-    color: #c9a84c;
-    font-style: italic;
-">
-    🗺️ El mapa se revelará<br>al explorar el dungeon...
-</div>
-""", unsafe_allow_html=True)
+        with st.container(border=True):
+            st.caption("El mapa se revelará al explorar el dungeon.")
 
-    st.markdown("---")
+    st.button("Nueva partida", icon=":material/restart_alt:", width="stretch", on_click=nueva_partida)
 
-    # --- Botón Nueva Partida ---
-    if st.button("🔄 Nueva Partida", use_container_width=True):
-        nueva_partida()
-
-    # --- Información de la sesión ---
-    with st.expander("ℹ️ Info de Sesión", expanded=False):
-        st.markdown(f"**Thread ID:** `{st.session_state.thread_id[:8]}...`")
-        st.markdown(f"**Mensajes:** {len(st.session_state.messages)}")
-        st.markdown(f"**RAG:** {'✅ Disponible' if _vectorstore_available else '⚠️ No inicializado'}")
-        st.markdown(f"**Agente:** {'✅ OK' if _agent_available else '❌ Error'}")
+    st.caption(
+        f"RAG {'activo' if _vectorstore_available else 'sin inicializar'} · "
+        f"agente {'ok' if _agent_available else 'con error'} · "
+        f"hilo `{st.session_state.thread_id[:8]}`"
+    )
 
 # ---------------------------------------------------------------------------
 # PANEL PRINCIPAL
 # ---------------------------------------------------------------------------
+st.title("Dungeon Master", icon=":material/swords:")
+st.caption("Agente de D&D 5e con RAG y herramientas · Gemini + LangChain + LangGraph")
 
-st.title("⚔️ D&D AI Dungeon Master")
-st.caption("Powered by Google Gemini + LangChain + LangGraph")
-
-# Aviso si el vectorstore no existe (permitir continuar de todas formas)
 if not _vectorstore_available:
     st.warning(
-        "⚠️ **Base de conocimientos RAG no inicializada.** "
         "El DM funcionará sin consultar el reglamento de D&D 5e. "
-        "Ejecuta `python setup_rag.py` para inicializar la base de conocimientos."
+        "Ejecutá `python setup_rag.py` para inicializar la base de conocimientos.",
+        title="Base de conocimientos RAG no inicializada",
+        icon=":material/database:",
     )
 
-# Aviso si el agente no está disponible
 if not _agent_available:
     st.error(
-        f"❌ **Error al cargar el agente:** `{_agent_error}`\n\n"
-        "Verifica que todos los módulos estén correctamente instalados."
+        f"`{_agent_error}`\n\nVerificá que todas las dependencias estén instaladas.",
+        title="Error al cargar el agente",
+        icon=":material/error:",
     )
     st.stop()
 
-st.markdown("---")
-
 # ---------------------------------------------------------------------------
-# MENSAJE DE BIENVENIDA — Se muestra automáticamente al iniciar
+# MENSAJE DE BIENVENIDA
 # ---------------------------------------------------------------------------
+BIENVENIDA_HARDCODED = """Saludos, valiente aventurero. Soy tu **Dungeon Master**.
 
-BIENVENIDA_HARDCODED = """¡Saludos, valiente aventurero! Soy tu **Dungeon Master**, 
-guiado por la magia de la inteligencia artificial.
+Te encontrás ante las puertas de una antigua mazmorra élfica, olvidada por los siglos.
+Las antorchas parpadean con una luz tenue y el aire huele a piedra húmeda y a algo más... algo antiguo.
 
-🏰 Te encuentras ante las puertas de una antigua mazmorra élfica, olvidada por los siglos. 
-Las antorchas en las paredes parpadean con una luz tenue, proyectando sombras inquietantes. 
-El aire huele a piedra húmeda y algo más... algo antiguo.
+¿Qué decidís hacer?
 
-**Tu personaje:** Un aventurero curtido que busca gloria y fortuna en las profundidades de este lugar maldito.
+- **Explorar** el primer pasillo
+- **Inspeccionar** los alrededores
+- **Preguntar** al anciano que espera en la entrada
 
-¿Qué decides hacer? Puedes:
-- 🗡️ **Explorar** el primer pasillo
-- 🔦 **Inspeccionar** los alrededores
-- 📖 **Preguntar** sobre el lugar al anciano que encontraste en la entrada
-- ⚔️ **Cualquier otra acción** que se te ocurra
-
-*El destino aguarda...*"""
+*El destino aguarda.*"""
 
 if not st.session_state.messages:
-    # Intentar generar bienvenida con el agente; si falla, usar la hardcodeada
-    if _agent_available and not st.session_state.welcomed:
-        with st.spinner("🔮 El Dungeon Master prepara la aventura..."):
-            try:
-                mensaje_inicio = (
-                    "INICIO_DE_PARTIDA: Preséntate como el Dungeon Master de esta aventura de D&D 5e. "
-                    "Describe una escena de apertura atmosférica y emocionante en una mazmorra o dungeon. "
-                    "Pregunta qué hace el jugador para comenzar. Responde SOLO en español."
-                )
-                resultado = run_agent(mensaje_inicio, thread_id=st.session_state.thread_id)
-                texto_bienvenida = texto_de(resultado.get("response", BIENVENIDA_HARDCODED))
+    if not st.session_state.welcomed:
+        texto_bienvenida, tool_calls_bienvenida = BIENVENIDA_HARDCODED, []
+        with st.spinner("El Dungeon Master prepara la aventura…"):
+            mensaje_inicio = (
+                "INICIO_DE_PARTIDA: Preséntate como el Dungeon Master de esta aventura de D&D 5e. "
+                "Describe una escena de apertura atmosférica y emocionante en una mazmorra o dungeon. "
+                "Pregunta qué hace el jugador para comenzar. Responde SOLO en español."
+            )
+            resultado = run_agent(mensaje_inicio, thread_id=st.session_state.thread_id)
+            respuesta = texto_de(resultado.get("response", ""))
+            # run_agent no lanza excepciones: si falló, devuelve un texto que empieza con ❌
+            if respuesta and not respuesta.startswith("❌"):
+                texto_bienvenida = respuesta
                 tool_calls_bienvenida = resultado.get("tool_calls", [])
-            except Exception as e:
-                texto_bienvenida = BIENVENIDA_HARDCODED
-                tool_calls_bienvenida = []
 
-        # Guardar bienvenida en el historial
         st.session_state.messages.append({
             "role": "assistant",
             "content": texto_bienvenida,
-            "tool_calls": tool_calls_bienvenida
+            "tool_calls": tool_calls_bienvenida,
         })
-        st.session_state.welcomed = True
     else:
-        # Usar bienvenida hardcodeada
         st.session_state.messages.append({
-            "role": "assistant",
-            "content": BIENVENIDA_HARDCODED,
-            "tool_calls": []
+            "role": "assistant", "content": BIENVENIDA_HARDCODED, "tool_calls": [],
         })
-        st.session_state.welcomed = True
+    st.session_state.welcomed = True
 
 # ---------------------------------------------------------------------------
 # HISTORIAL DE MENSAJES
 # ---------------------------------------------------------------------------
+AVATAR = {"assistant": ":material/auto_stories:", "user": ":material/person:"}
 
 for idx, mensaje in enumerate(st.session_state.messages):
     rol = mensaje["role"]
-    contenido = mensaje["content"]
     tool_calls = mensaje.get("tool_calls", [])
 
-    with st.chat_message(rol, avatar="🎲" if rol == "assistant" else "🧙"):
-        # Razonamiento del modelo (si lo hubo), antes de las tools y de la respuesta
-        if mensaje.get("reasoning") and rol == "assistant":
-            renderizar_razonamiento(mensaje["reasoning"])
-
-        # Si hay tool calls, mostrarlos en expanders primero
-        if tool_calls and rol == "assistant":
-            renderizar_tool_calls(tool_calls)
-
-        # Mostrar el contenido del mensaje
-        st.markdown(texto_de(contenido))
-
-        # Si ese turno actualizó el mapa, ofrecer exportarlo desde el chat
-        if rol == "assistant" and uso_mapa(tool_calls):
-            boton_descarga_mapa(f"dl_mapa_{idx}")
+    with st.chat_message(rol, avatar=AVATAR.get(rol)):
+        if rol == "assistant":
+            # Orden fijo: razonamiento, herramientas (en orden de invocación), respuesta
+            if mensaje.get("reasoning"):
+                renderizar_razonamiento(mensaje["reasoning"], key=f"razon_{idx}")
+            for registro in tool_calls:
+                paso_estatico(registro)
+            with st.container(key=f"narr_{idx}"):
+                st.markdown(texto_de(mensaje["content"]))
+            if uso_mapa(tool_calls):
+                boton_descarga_mapa(f"dl_mapa_{idx}")
+        else:
+            st.markdown(texto_de(mensaje["content"]))
 
 # ---------------------------------------------------------------------------
-# INPUT DEL USUARIO
+# INPUT DEL USUARIO + STREAMING DEL AGENTE
 # ---------------------------------------------------------------------------
-
 # submit_mode="disable": mientras el agente trabaja no se puede enviar otro mensaje
 if prompt := st.chat_input("¿Qué hace tu personaje?", submit_mode="disable"):
 
-    # 1. Agregar mensaje del usuario al historial y mostrarlo
-    st.session_state.messages.append({
-        "role": "user",
-        "content": prompt,
-        "tool_calls": []
-    })
-
-    with st.chat_message("user", avatar="🧙"):
+    st.session_state.messages.append({"role": "user", "content": prompt, "tool_calls": []})
+    with st.chat_message("user", avatar=AVATAR["user"]):
         st.markdown(prompt)
 
-    # 2. Llamar al agente y mostrar la respuesta
-    # El orden visual es fijo: razonamiento, tools (en el orden en que se invocan) y respuesta.
-    # Se reservan los tres espacios y se van llenando en vivo con los eventos del agente.
-    with st.chat_message("assistant", avatar="🎲"):
+    # Se reservan los tres espacios (razonamiento, tools, respuesta) y se llenan en vivo
+    with st.chat_message("assistant", avatar=AVATAR["assistant"]):
         razon_box = st.container()
         tools_box = st.container()
-        texto_box = st.empty()
-        texto_box.caption("🔮 El Dungeon Master consulta los arcanos...")  # hasta el primer token
+        with st.container(key="narr_live"):
+            texto_box = st.empty()
+        texto_box.markdown(":shimmer[El Dungeon Master consulta los arcanos…]")
 
         razonamiento, texto, error = "", "", None
         tool_calls: list = []
-        pendientes: dict = {}   # id de tool_call -> (registro, espacio en pantalla)
-        razon_vista = None      # (st.status, espacio) se crea al llegar el primer razonamiento
+        pasos: dict = {}        # id de tool_call -> (registro, st.status del paso)
+        razon_estado = None     # st.status del razonamiento; se crea con el primer bloque
+        razon_texto = None
 
         for ev in stream_agent(prompt, thread_id=st.session_state.thread_id):
             tipo = ev["type"]
 
             if tipo == "reasoning":
                 razonamiento += ev["text"]
-                if razon_vista is None:
+                if razon_estado is None:
                     with razon_box:
-                        estado = st.status("🧠 Razonando...", expanded=True)
-                        razon_vista = (estado, estado.empty())
-                razon_vista[1].markdown(razonamiento)
+                        razon_estado = st.status(":shimmer[Razonando…]", type="compact", expanded=True)
+                        with razon_estado:
+                            with st.container(key="razon_live"):
+                                razon_texto = st.empty()
+                razon_texto.markdown(razonamiento)
 
             elif tipo == "tool_call":
-                # La tool aparece apenas el agente decide invocarla (resultado pendiente)
                 registro = {"name": ev["name"], "input": ev["args"], "output": ""}
                 tool_calls.append(registro)
                 # Separar el texto previo a la tool del que venga después
                 if texto and not texto.endswith("\n\n"):
                     texto += "\n\n"
-                espacio = tools_box.empty()
-                pendientes[ev["id"]] = (registro, espacio)
-                with espacio.container():
-                    renderizar_tool_calls([registro])
+                # El paso aparece apenas el agente decide invocar la tool, ya con sus argumentos
+                with tools_box:
+                    estado = st.status(etiqueta_tool(registro), type="step", state="running")
+                    with estado:
+                        mostrar_args(registro["input"])
+                pasos[ev["id"]] = (registro, estado)
 
             elif tipo == "tool_result":
-                if ev["id"] in pendientes:
-                    registro, espacio = pendientes[ev["id"]]
+                if ev["id"] in pasos:
+                    registro, estado = pasos[ev["id"]]
                     registro["output"] = ev["output"]
-                    with espacio.container():
-                        renderizar_tool_calls([registro])
+                    with estado:
+                        mostrar_resultado(registro)
+                    estado.update(label=etiqueta_tool(registro), state=estado_tool(registro))
 
             elif tipo == "text":
                 texto += ev["text"]
@@ -612,8 +476,10 @@ if prompt := st.chat_input("¿Qué hace tu personaje?", submit_mode="disable"):
             elif tipo == "error":
                 error = ev["message"]
 
-        if razon_vista is not None:
-            razon_vista[0].update(label="🧠 Razonamiento del modelo", state="complete", expanded=False)
+        if razon_estado is not None:
+            razon_estado.update(
+                label=":violet[:material/psychology:] Razonamiento", state="complete", expanded=False
+            )
         texto_box.markdown(texto)
 
         # Exportar el mapa desde el chat si este turno lo actualizó (misma key que usará el historial)
@@ -622,9 +488,9 @@ if prompt := st.chat_input("¿Qué hace tu personaje?", submit_mode="disable"):
 
         if error:
             st.error(
-                "⚔️ **El Dungeon Master tropieza con un hechizo roto...**\n\n"
-                f"Error técnico: `{error}`\n\n"
-                "Intenta de nuevo o reinicia la partida con '🔄 Nueva Partida'."
+                f"`{error}`\n\nIntentá de nuevo o reiniciá con «Nueva partida».",
+                title="El Dungeon Master tropezó con un hechizo roto",
+                icon=":material/error:",
             )
 
         # Guardar en el historial (con razonamiento y tools para poder re-renderizar)
@@ -635,5 +501,5 @@ if prompt := st.chat_input("¿Qué hace tu personaje?", submit_mode="disable"):
             "reasoning": razonamiento,
         })
 
-    # 3. Refrescar la página para actualizar el sidebar (HP, mapa, etc.)
+    # Refrescar para actualizar el sidebar (HP, mapa, etc.)
     st.rerun()
