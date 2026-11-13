@@ -15,7 +15,7 @@ import json
 import os
 import re
 import time
-import uuid
+from datetime import datetime
 from pathlib import Path
 
 import streamlit as st
@@ -68,12 +68,17 @@ except ImportError as e:
     _state_manager_error = str(e)
 
 try:
-    from game_engine.map_renderer import DUNGEON_LAYOUT
+    from game_engine.map_renderer import DUNGEON_LAYOUT, get_map_renderer
 except ImportError:
-    DUNGEON_LAYOUT = {}
+    DUNGEON_LAYOUT, get_map_renderer = {}, None
 
 try:
-    from agent.core import stream_agent, clear_conversation, seed_conversation
+    from ui.visor_mapa import visor_mapa      # mapa con zoom de rueda (componente v2)
+except Exception:                              # si falla, el diálogo muestra una imagen simple
+    visor_mapa = None
+
+try:
+    from agent.core import stream_agent, clear_conversation, seed_conversation, get_conversation_length
     _agent_available = True
 except ImportError as e:
     _agent_available = False
@@ -91,16 +96,26 @@ def ruta_mapa() -> Path:
 
 
 # ---------------------------------------------------------------------------
-# SESSION STATE
+# PARTIDA ACTIVA DE ESTA SESIÓN
 # ---------------------------------------------------------------------------
-if "messages" not in st.session_state:
-    st.session_state.messages = []          # historial visible de la partida
+# Cada partida guardada tiene su carpeta (estado, historial, mapa, informes) y su memoria del agente
+# (SQLite), y UN solo id (el de la carpeta) gobierna los tres. El estado del juego es un singleton del
+# PROCESO, así que al inicio de cada ejecución se lo reapunta a la partida de ESTA sesión.
+if not _state_manager_available:
+    st.error(f"`{_state_manager_error}`", title="Error al cargar el motor de juego", icon=":material/error:")
+    st.stop()
 
-if "thread_id" not in st.session_state:
-    st.session_state.thread_id = str(uuid.uuid4())   # hilo de memoria del agente
+_sm = get_state_manager()
+_sm.validar_activa()                                     # por si la carpeta activa desapareció
+if "partida_id" not in st.session_state:
+    st.session_state.partida_id = _sm.id_activa          # la última activa: recargar la página la retoma
+elif not _sm.abrir_partida(st.session_state.partida_id):
+    st.session_state.partida_id = _sm.id_activa          # la borraron desde otra pestaña
 
-if "welcomed" not in st.session_state:
-    st.session_state.welcomed = False
+# El historial visible se carga de disco al entrar a una partida (y al cambiar de partida)
+if st.session_state.get("mensajes_de") != st.session_state.partida_id:
+    st.session_state.messages = _sm.cargar_mensajes()
+    st.session_state.mensajes_de = st.session_state.partida_id
 
 # ---------------------------------------------------------------------------
 # PRESENTACIÓN DE HERRAMIENTAS
@@ -340,46 +355,101 @@ def boton_descarga_mapa(key: str, etiqueta: str = "Descargar mapa", ancho: str =
 
 @st.dialog("Mapa de la mazmorra", width="large")
 def ver_mapa_grande():
-    """El mapa a tamaño completo: en la barra lateral mide ~300 px y los nombres no se leen."""
-    if ruta_mapa().exists():
+    """El mapa en grande, centrado y sin scroll, con zoom de rueda (ver ui/visor_mapa.py)."""
+    if not ruta_mapa().exists():
+        st.caption("Todavía no hay mapa.")
+    elif visor_mapa is not None:
+        visor_mapa(ruta_mapa(), key="visor_mapa")
+    else:                                          # respaldo si el componente no se pudo cargar
         st.image(str(ruta_mapa()), width="stretch", alt="Mapa ilustrado de la mazmorra con las salas exploradas")
-        boton_descarga_mapa("descargar_mapa_dialogo")
+
+
+def hace_tiempo(cuando: datetime) -> str:
+    """'recién', 'hace 5 min', 'hace 3 h', 'ayer' o la fecha."""
+    seg = (datetime.now() - cuando).total_seconds()
+    if seg < 60:
+        return "recién"
+    if seg < 3600:
+        return f"hace {int(seg // 60)} min"
+    if seg < 86400:
+        return f"hace {int(seg // 3600)} h"
+    if seg < 172800:
+        return "ayer"
+    return cuando.strftime("%d/%m")
+
+
+def titulo_partida(p: dict) -> str:
+    """Título de una partida guardada: el nombre del personaje (o 'Nueva aventura' si aún no lo creó)."""
+    return p["nombre"] if p["ficha_creada"] else "Nueva aventura"
+
+
+def detalle_partida(p: dict) -> str:
+    base = f"{p['raza']} {p['clase']} · Nv {p['nivel']}".strip() if p["ficha_creada"] else "Sin personaje"
+    return f"{base} · {p['turnos']} turno{'s' if p['turnos'] != 1 else ''} · {hace_tiempo(p['actualizado'])}"
+
+
+def guardar_historial():
+    """Guarda el chat visible de la partida activa (se llama tras cada mensaje del jugador y del DM)."""
+    try:
+        _sm.guardar_mensajes(st.session_state.messages)
+    except OSError as e:
+        st.toast(f"No se pudo guardar el historial: {e}", icon=":material/error:")
+
+
+def cambiar_a(partida_id: str):
+    """Abre una partida guardada (callback del historial). El chat se carga solo en la ejecución siguiente."""
+    if _sm.abrir_partida(partida_id):
+        st.session_state.partida_id = partida_id
 
 
 def nueva_partida():
-    """Reinicia el estado del juego, la memoria del agente y el historial visible."""
-    if _agent_available:
+    """Crea una partida nueva SIN tocar las anteriores (que quedan en el historial)."""
+    actual = next((p for p in _sm.listar_partidas() if p["id"] == st.session_state.partida_id), None)
+    if actual and not actual["ficha_creada"] and actual["turnos"] == 0:
+        st.toast("Ya estás en una partida nueva: todavía no jugaste nada.", icon=":material/info:")
+        return
+    st.session_state.partida_id = _sm.nueva_partida()
+
+
+@st.dialog("¿Borrar esta partida?")
+def confirmar_borrado(partida_id: str, titulo: str):
+    """Confirmación antes de borrar: es lo único irreversible de la interfaz."""
+    st.markdown(f"Vas a borrar **{titulo}**: su ficha, el mapa, las crónicas y todo el chat.")
+    st.caption("Esta acción no se puede deshacer.")
+    col_cancelar, col_borrar = st.columns(2)
+    if col_cancelar.button("Cancelar", width="stretch"):
+        st.rerun()
+    if col_borrar.button("Borrar", icon=":material/delete:", type="primary", width="stretch"):
         try:
-            clear_conversation(st.session_state.thread_id)   # libera el checkpointer
+            clear_conversation(partida_id)               # la memoria del agente en disco
         except Exception:
             pass
-
-    st.session_state.messages = []
-    st.session_state.welcomed = False
-    st.session_state.thread_id = str(uuid.uuid4())
-
-    if _state_manager_available:
-        try:
-            sm = get_state_manager()
-            sm.reset_state()
-            # El PNG del mapa es lo que se descarga: hay que volver a dibujar la niebla inicial
-            from game_engine.map_renderer import get_map_renderer
-            get_map_renderer().render_fog_of_war(discovered_rooms=sm.get_discovered_rooms())
-        except Exception as e:
-            st.toast(f"No se pudo reiniciar el estado: {e}", icon=":material/error:")
-    # No hace falta st.rerun(): se usa como callback on_click y Streamlit re-ejecuta solo.
+        activa = _sm.borrar_partida(partida_id)
+        if st.session_state.partida_id == partida_id:
+            st.session_state.partida_id = activa
+        st.rerun()
 
 
 # ---------------------------------------------------------------------------
-# SIDEBAR — Personaje y mapa (compacto: debe verse completo sin scroll)
+# SIDEBAR — Nueva partida arriba y dos pestañas: la partida actual y el historial
 # ---------------------------------------------------------------------------
+# El mapa de una partida recién creada todavía no existe: se dibuja la niebla inicial
+if not ruta_mapa().exists() and get_map_renderer is not None:
+    try:
+        get_map_renderer().render_fog_of_war(_sm.get_discovered_rooms())
+    except Exception:
+        pass
+
 with st.sidebar:
-    if _state_manager_available:
-        state_manager = get_state_manager()
+    st.button("Nueva partida", icon=":material/add:", width="stretch", key="nueva_partida", on_click=nueva_partida)
+    tab_partida, tab_historial = st.tabs([":material/shield_person: Partida", ":material/history: Historial"])
+
+    # --- Pestaña "Partida": ficha, vida, ubicación, enemigos y mapa (compacto, sin scroll) ---
+    with tab_partida:
         try:
-            hp = state_manager.get_player_hp()
-            max_hp = state_manager.get_player_max_hp()
-            info = state_manager.get_player_info()
+            hp = _sm.get_player_hp()
+            max_hp = _sm.get_player_max_hp()
+            info = _sm.get_player_info()
         except Exception as e:
             st.warning(f"Error al cargar el estado: {e}")
             hp, max_hp, info = None, None, {}
@@ -399,7 +469,7 @@ with st.sidebar:
             col_xp.markdown(f":violet[:material/auto_awesome:] **{info.get('experiencia', 0)}** XP")
 
             try:
-                sala = state_manager.get_current_room()
+                sala = _sm.get_current_room()
                 st.markdown(
                     f":green[:material/location_on:] **Ubicación** &nbsp; {DUNGEON_LAYOUT.get(sala, {}).get('nombre', sala)}"
                 )
@@ -408,7 +478,7 @@ with st.sidebar:
 
         # Enemigos: solo ocupan lugar si hay combate
         try:
-            npcs = state_manager.get_active_npcs()
+            npcs = _sm.get_active_npcs()
         except Exception:
             npcs = {}
         if npcs:
@@ -421,36 +491,54 @@ with st.sidebar:
                     st.progress(max(0.0, min(1.0, hp_npc / max_hp_npc)))
         else:
             st.caption(":gray[:material/shield:] Sin enemigos en combate")
-    else:
-        st.warning(f"Motor de juego no disponible: `{_state_manager_error}`")
 
-    # --- Mapa del dungeon (producto tangible de la partida) ---
-    st.markdown("#### :green[:material/map:] Mapa")
-    if ruta_mapa().exists():
-        st.image(str(ruta_mapa()), width="stretch", alt="Mapa del dungeon con las salas exploradas")
-        col_ampliar, col_descargar = st.columns(2)
-        with col_ampliar:
-            if st.button("Ampliar", icon=":material/zoom_in:", key="ampliar_mapa", width="stretch"):
-                ver_mapa_grande()
-        with col_descargar:
-            boton_descarga_mapa("descargar_mapa", etiqueta="Descargar", ancho="stretch")
-    else:
-        with st.container(border=True):
-            st.caption("El mapa se revelará al explorar el dungeon.")
+        # --- Mapa del dungeon (producto tangible de la partida) ---
+        st.markdown("#### :green[:material/map:] Mapa")
+        if ruta_mapa().exists():
+            st.image(str(ruta_mapa()), width="stretch", alt="Mapa del dungeon con las salas exploradas")
+            col_ampliar, col_descargar = st.columns(2)
+            with col_ampliar:
+                if st.button("Ampliar", icon=":material/zoom_in:", key="ampliar_mapa", width="stretch"):
+                    ver_mapa_grande()
+            with col_descargar:
+                boton_descarga_mapa("descargar_mapa", etiqueta="Descargar", ancho="stretch")
+        else:
+            with st.container(border=True):
+                st.caption("El mapa se revelará al explorar el dungeon.")
 
-    # Pasos abiertos: despliega el razonamiento y cada herramienta (útil para la demo y la revisión)
-    pasos_abiertos = st.toggle(
-        "Mostrar pasos abiertos", value=True, key="pasos_abiertos",
-        help="Despliega el razonamiento y cada herramienta en el chat. Apagalo para una vista compacta.",
-    )
+    # --- Pestaña "Historial": partidas guardadas y ajustes ---
+    with tab_historial:
+        partidas = _sm.listar_partidas()
+        st.caption(f"{len(partidas)} partida{'s' if len(partidas) != 1 else ''} guardada{'s' if len(partidas) != 1 else ''}")
+        # Alto fijo con scroll propio: la lista puede crecer sin empujar el resto de la barra
+        with st.container(height=300, border=False):
+            for p in partidas[:50]:
+                es_actual = p["id"] == st.session_state.partida_id
+                titulo = titulo_partida(p)
+                col_abrir, col_borrar = st.columns([5, 1], vertical_alignment="center")
+                with col_abrir:
+                    st.button(
+                        titulo if len(titulo) <= 24 else titulo[:23] + "…",
+                        key=f"abrir_{p['id']}", icon=":material/chat:" if es_actual else ":material/chat_bubble_outline:",
+                        type="primary" if es_actual else "secondary", width="stretch",
+                        disabled=es_actual, on_click=cambiar_a, args=(p["id"],), help=f"{titulo} · {detalle_partida(p)}",
+                    )
+                with col_borrar:
+                    if st.button(":material/delete:", key=f"borrar_{p['id']}", help="Borrar esta partida", width="stretch"):
+                        confirmar_borrado(p["id"], titulo)
+                st.caption(detalle_partida(p))
 
-    st.button("Nueva partida", icon=":material/restart_alt:", width="stretch", on_click=nueva_partida)
-
-    st.caption(
-        f"RAG {'activo' if _vectorstore_available else 'sin inicializar'} · "
-        f"agente {'ok' if _agent_available else 'con error'} · "
-        f"hilo `{st.session_state.thread_id[:8]}`"
-    )
+        st.markdown("**Ajustes**")
+        # Pasos abiertos: despliega el razonamiento y cada herramienta (útil para la demo y la revisión)
+        pasos_abiertos = st.toggle(
+            "Mostrar pasos abiertos", value=True, key="pasos_abiertos",
+            help="Despliega el razonamiento y cada herramienta en el chat. Apagalo para una vista compacta.",
+        )
+        st.caption(
+            f"RAG {'activo' if _vectorstore_available else 'sin inicializar'} · "
+            f"agente {'ok' if _agent_available else 'con error'} · "
+            f"partida `{st.session_state.partida_id[-4:]}`"
+        )
 
 # ---------------------------------------------------------------------------
 # PANEL PRINCIPAL
@@ -510,42 +598,46 @@ Si prefieres que lo elija yo, escribe *sortea* y te propondré una combinación.
 
 *El destino aguarda.*"""
 
-def bienvenida_segun_estado() -> str:
+def resumen_para_retomar() -> str:
     """
-    Si ya hay una partida en curso (el estado se guarda en disco, pero la memoria de la
-    conversación no) —por ejemplo, tras recargar la página— la retoma en lugar de pedir
-    crear el personaje otra vez mientras la barra lateral sigue mostrando al anterior.
+    Texto con el que se orienta al modelo cuando el chat de la partida existe pero su MEMORIA no
+    (por ejemplo, si se borró storage/memoria.db). Se siembra en el hilo; no se muestra al jugador.
     """
     try:
-        estado = get_state_manager().get_state()
+        estado = _sm.get_state()
         j = estado["jugador"]
         if not j.get("ficha_creada"):
             return BIENVENIDA
         sala = estado["sala_actual"]
         lugar = DUNGEON_LAYOUT.get(sala, {}).get("nombre", sala)
         texto = (
-            f"**Bienvenido de nuevo, {j['nombre']}.** Retomas tu aventura: {j['raza']} {j['clase']} "
-            f"de nivel {j['nivel']}, con {j['hp']}/{j['max_hp']} puntos de vida, en la sala **{lugar}**."
+            f"Se retoma una partida guardada: {j['nombre']}, {j['raza']} {j['clase']} de nivel {j['nivel']}, "
+            f"con {j['hp']}/{j['max_hp']} puntos de vida, en la sala {lugar}."
         )
         if estado["npcs"]:
-            enemigos = ", ".join(d["nombre"] for d in estado["npcs"].values())
-            texto += f" El combate continúa: {enemigos} sigue frente a ti."
-        return texto + (
-            "\n\n*La memoria de la charla se reinició: tu personaje y el mapa se conservan, "
-            "pero el relato anterior no.* ¿Qué haces?"
-        )
+            texto += " Enemigos en combate: " + ", ".join(d["nombre"] for d in estado["npcs"].values()) + "."
+        return texto + " La memoria detallada de la conversación anterior no está disponible."
     except Exception:
         return BIENVENIDA
 
 
-# La bienvenida es un texto fijo: no gasta una llamada al modelo (cuota gratuita) y es instantánea.
-# Se registra en la memoria del agente para que sepa qué le dijo al jugador.
+_pid = st.session_state.partida_id
 if not st.session_state.messages:
-    texto_bienvenida = bienvenida_segun_estado()
-    if not st.session_state.welcomed:
-        seed_conversation(st.session_state.thread_id, texto_bienvenida)
-    st.session_state.messages.append({"role": "assistant", "content": texto_bienvenida, "tool_calls": []})
-    st.session_state.welcomed = True
+    # Partida nueva: bienvenida fija (no gasta una llamada al modelo) registrada en la memoria del agente
+    seed_conversation(_pid, BIENVENIDA)
+    st.session_state.messages.append({"role": "assistant", "content": BIENVENIDA, "tool_calls": []})
+    guardar_historial()
+else:
+    # Partida retomada. Si la última entrada es del jugador, el turno anterior se cortó (F5, Stop, caída)
+    if st.session_state.messages[-1]["role"] == "user":
+        st.session_state.messages.append({
+            "role": "assistant", "tool_calls": [], "reasoning": "", "seg": None,
+            "content": "*El turno anterior se interrumpió antes de terminar. Puedes repetir tu acción.*",
+        })
+        guardar_historial()
+    # Si el chat existe pero la memoria del agente no, se la orienta con el estado guardado
+    if get_conversation_length(_pid) == 0:
+        seed_conversation(_pid, resumen_para_retomar())
 
 # ---------------------------------------------------------------------------
 # HISTORIAL DE MENSAJES
@@ -581,6 +673,7 @@ for idx, mensaje in enumerate(st.session_state.messages):
 if prompt := st.chat_input("¿Qué hace tu personaje?", submit_mode="disable"):
 
     st.session_state.messages.append({"role": "user", "content": prompt, "tool_calls": []})
+    guardar_historial()      # el mensaje del jugador se guarda ANTES del turno: si se corta, no se pierde
     with st.chat_message("user", avatar=AVATAR["user"]):
         st.markdown(prompt)
 
@@ -599,7 +692,7 @@ if prompt := st.chat_input("¿Qué hace tu personaje?", submit_mode="disable"):
         razon_texto = None
         t_turno = time.time()
 
-        for ev in stream_agent(prompt, thread_id=st.session_state.thread_id):
+        for ev in stream_agent(prompt, thread_id=st.session_state.partida_id):
             tipo = ev["type"]
 
             if tipo == "reasoning":
@@ -679,6 +772,7 @@ if prompt := st.chat_input("¿Qué hace tu personaje?", submit_mode="disable"):
             "reasoning": razonamiento,
             "seg": None if error else seg_turno,
         })
+        guardar_historial()      # también si hubo error: el chat queda tal como el jugador lo vio
 
     # Refrescar para actualizar el sidebar (HP, mapa, etc.)
     st.rerun()
