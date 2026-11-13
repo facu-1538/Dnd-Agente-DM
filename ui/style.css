@@ -37,3 +37,79 @@
     margin: 0.9rem 0;
     opacity: 0.25;
 }
+
+/* ---- Barra lateral ---- */
+/* Botón de colapsar: siempre visible y más grande (por defecto es chico y se oculta) */
+[data-testid="stSidebarCollapseButton"] { opacity: 1 !important; visibility: visible !important; }
+[data-testid="stSidebarCollapseButton"] button {
+    width: 40px; height: 40px; border-radius: 10px;
+    background: rgba(232, 224, 204, 0.10);
+    transition: background .2s ease;
+}
+[data-testid="stSidebarCollapseButton"] button:hover { background: rgba(179, 38, 58, 0.35); }
+[data-testid="stSidebarCollapseButton"] button span { font-size: 1.7rem !important; width: 1.7rem; height: 1.7rem; }
+
+/* Con la barra cerrada no se ve el botón de abrir: el logo cumple esa función.
+   El botón real queda encima del logo, transparente, y recibe el clic. */
+[data-testid="stExpandSidebarButton"] {
+    position: fixed; left: 8px; top: 4px; width: 64px; height: 48px;
+    opacity: 0; cursor: pointer; z-index: 1000;
+}
+[data-testid="stHeaderLogo"] { cursor: pointer; transition: transform .2s ease, filter .2s ease; }
+[data-testid="stHeaderLogo"]:hover { transform: scale(1.12); filter: brightness(1.2); }
+
+/* El mapa del sidebar no ofrece el botón de pantalla completa (para eso está "Ampliar") */
+[data-testid="stSidebar"] [data-testid="stElementToolbar"] { display: none !important; }
+
+/* Pestañas Partida / Historial: mitad y mitad, en mayúscula y negrita. El color de las letras
+   y la barra de abajo (que se desliza de una a otra) están animados. */
+[data-testid="stSidebar"] [role="tablist"] {
+    position: relative; display: flex; width: 100%; gap: 0;
+    border-bottom: 1px solid rgba(232, 224, 204, 0.12);
+}
+[data-testid="stSidebar"] [role="tablist"]::after {
+    content: ""; position: absolute; left: 0; bottom: -1px; width: 50%; height: 3px; border-radius: 3px;
+    background: linear-gradient(90deg, #b3263a, #e3a73b);
+    transition: transform .4s cubic-bezier(.4, 0, .2, 1);
+}
+[data-testid="stSidebar"] [role="tablist"]:has([role="tab"]:nth-child(2)[aria-selected="true"])::after {
+    transform: translateX(100%);
+}
+[data-testid="stSidebar"] [role="tab"] {
+    flex: 1 1 50%; justify-content: center; padding: .7rem 0;
+    border-bottom: none !important; box-shadow: none !important;
+    transition: color .35s ease, background .35s ease;
+}
+[data-testid="stSidebar"] [role="tab"]::after, [data-testid="stSidebar"] [role="tab"]::before { display: none !important; }
+[data-testid="stSidebar"] [role="tab"] p {
+    font-size: 1.05rem; font-weight: 800; text-transform: uppercase; letter-spacing: .06em;
+    color: inherit; text-align: center; transition: color .35s ease;
+}
+[data-testid="stSidebar"] [role="tab"][aria-selected="false"] { color: #7d7b93; }
+[data-testid="stSidebar"] [role="tab"][aria-selected="false"]:hover { color: #e8e0cc; background: rgba(232, 224, 204, .05); }
+[data-testid="stSidebar"] [role="tab"][aria-selected="true"] { color: #e3a73b; }
+
+/* ---- Riel de mensajes (estilo ChatGPT): un punto por mensaje del jugador ---- */
+.msg-ancla { display: block; height: 0; scroll-margin-top: 80px; }
+.riel {
+    position: fixed; right: 14px; top: 50%; transform: translateY(-50%); z-index: 50;
+    display: flex; flex-direction: column; align-items: flex-end; gap: 4px;
+    max-height: 70vh; overflow-y: auto; padding: 8px 4px; scrollbar-width: none;
+}
+.riel a {
+    display: flex; align-items: center; justify-content: flex-end; gap: 10px;
+    padding: 3px 4px; text-decoration: none; color: #b9b6cc; font-size: .8rem;
+}
+.riel a i {
+    flex: none; width: 9px; height: 9px; border-radius: 50%;
+    background: #5a5870; transition: background .2s ease, transform .2s ease;
+}
+.riel a .t {
+    max-width: 0; opacity: 0; overflow: hidden; white-space: nowrap;
+    padding: 4px 0; border-radius: 8px; background: rgba(15, 15, 23, .94);
+    transition: max-width .25s ease, opacity .2s ease, padding .25s ease;
+}
+.riel:hover a .t { max-width: 240px; opacity: 1; padding: 4px 10px; }
+.riel a:hover i { background: #b3263a; transform: scale(1.5); }
+.riel a:hover .t { color: #fff; }
+@media (max-width: 1000px) { .riel { display: none; } }

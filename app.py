@@ -11,6 +11,7 @@ Estilo: el tema (colores, fuentes, radios) está en .streamlit/config.toml y sol
 tipografía de lectura de la narración está en ui/style.css.
 """
 
+import html
 import json
 import os
 import re
@@ -44,6 +45,24 @@ if _logo.exists():
 _css = Path(__file__).parent / "ui" / "style.css"
 if _css.exists():
     st.html(f"<style>{_css.read_text(encoding='utf-8')}</style>")
+
+# Salto del riel de mensajes: script fijo (sin datos del usuario), se instala una sola vez.
+# El hash (#msg-N) solo no alcanza porque el contenedor del chat mantiene el scroll abajo.
+st.html(
+    """<script>
+    if (!window.__rielListo) {
+      window.__rielListo = true;
+      document.addEventListener("click", (e) => {
+        const a = e.target.closest && e.target.closest(".riel a");
+        if (!a) return;
+        e.preventDefault();
+        const destino = document.getElementById(a.getAttribute("href").slice(1));
+        if (destino) destino.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    }
+    </script>""",
+    unsafe_allow_javascript=True,
+)
 
 # ---------------------------------------------------------------------------
 # VERIFICACIÓN DE API KEY — Detenemos la app si no está configurada
@@ -644,6 +663,38 @@ else:
 # ---------------------------------------------------------------------------
 AVATAR = {"assistant": ":material/auto_stories:", "user": ":material/person:"}
 
+
+def ancla_mensaje(idx: int):
+    """Marca (invisible) el mensaje del jugador para que el riel lateral pueda saltar hasta él."""
+    st.html(f'<span id="msg-{idx}" class="msg-ancla"></span>')
+
+
+def html_riel(mensajes: list) -> str:
+    """
+    Riel lateral estilo ChatGPT: un punto por cada mensaje del jugador; al pasar el mouse muestra
+    su mini título y al hacer clic salta a esa parte de la conversación.
+    """
+    items = []
+    for i, m in enumerate(mensajes):
+        if m["role"] != "user":
+            continue
+        titulo = " ".join(texto_de(m["content"]).split())
+        titulo = titulo if len(titulo) <= 44 else titulo[:43].rstrip() + "…"
+        items.append(f'<a href="#msg-{i}" aria-label="Ir al mensaje: {html.escape(titulo)}">'
+                     f'<span class="t">{html.escape(titulo)}</span><i></i></a>')
+    return f'<nav class="riel" aria-label="Mensajes de la conversación">{"".join(items)}</nav>' if items else ""
+
+
+riel_box = st.empty()          # posición fija en pantalla: se redibuja al llegar un mensaje nuevo
+
+
+def pintar_riel():
+    contenido = html_riel(st.session_state.messages)
+    if contenido:
+        riel_box.html(contenido)
+    else:
+        riel_box.empty()          # st.html no acepta un cuerpo vacío
+
 for idx, mensaje in enumerate(st.session_state.messages):
     rol = mensaje["role"]
     tool_calls = mensaje.get("tool_calls", [])
@@ -664,7 +715,10 @@ for idx, mensaje in enumerate(st.session_state.messages):
             if mensaje.get("seg") is not None:
                 st.caption(resumen_turno(len(tool_calls), mensaje["seg"]))
         else:
+            ancla_mensaje(idx)
             st.markdown(texto_de(mensaje["content"]))
+
+pintar_riel()
 
 # ---------------------------------------------------------------------------
 # INPUT DEL USUARIO + STREAMING DEL AGENTE
@@ -674,7 +728,9 @@ if prompt := st.chat_input("¿Qué hace tu personaje?", submit_mode="disable"):
 
     st.session_state.messages.append({"role": "user", "content": prompt, "tool_calls": []})
     guardar_historial()      # el mensaje del jugador se guarda ANTES del turno: si se corta, no se pierde
+    pintar_riel()
     with st.chat_message("user", avatar=AVATAR["user"]):
+        ancla_mensaje(len(st.session_state.messages) - 1)
         st.markdown(prompt)
 
     # Se reservan los tres espacios (razonamiento, tools, respuesta) y se llenan en vivo
