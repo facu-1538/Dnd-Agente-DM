@@ -36,6 +36,9 @@ _conversation_history: dict[str, list] = {}
 # Lista de todas las tools disponibles para el agente
 _TOOLS = [query_rules_rag, execute_dice_roll, switch_and_render_map]
 
+from agent.tools import damage_player, heal_player
+_TOOLS = _TOOLS + [damage_player, heal_player]
+
 # Mapa de nombre de tool → función callable (para ejecutar las tools)
 _TOOL_MAP = {tool.name: tool for tool in _TOOLS}
 
@@ -132,6 +135,7 @@ def _execute_tool(tool_name: str, tool_input: dict) -> str:
         return f"❌ Error al ejecutar la tool '{tool_name}': {e}"
 
 
+
 # ---------------------------------------------------------------------------
 # Función principal de ejecución del agente
 # ---------------------------------------------------------------------------
@@ -168,6 +172,8 @@ def run_agent(user_message: str, thread_id: str = "default") -> dict:
 
         # Inicializar el historial para este thread si no existe
         if thread_id not in _conversation_history:
+
+            user_message = _estado_jugador() + user_message  # (agregado)
             # Comenzar el historial con el prompt del sistema
             _conversation_history[thread_id] = [
                 SystemMessage(content=DM_SYSTEM_PROMPT)
@@ -288,3 +294,16 @@ def reset_agent() -> None:
     global _agent
     _agent = None
     _conversation_history.clear()
+
+
+#Agregados Hernan
+def _estado_jugador() -> str:
+    """Línea con el HP real del jugador para que el modelo no lo invente (agregado)."""
+    try:
+        from game_engine.state_manager import get_state_manager
+        j = get_state_manager().get_state().get("jugador", {})
+        hp = j.get("hp", "?")
+        hp_max = j.get("hp_max", j.get("hp_maximo", j.get("max_hp", 100)))
+        return f"[ESTADO ACTUAL DEL JUGADOR: HP {hp}/{hp_max}]\n"
+    except Exception:
+        return ""

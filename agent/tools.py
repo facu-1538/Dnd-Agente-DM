@@ -301,3 +301,86 @@ def switch_and_render_map(revealed_nodes: list) -> str:
             f"❌ Error al actualizar el mapa: {e}. "
             "El juego puede continuar normalmente; el mapa se actualizará en el próximo movimiento."
         )
+
+
+
+
+# ---------------------------------------------------------------------------
+# TOOLS 4 y 5: Vida del jugador (daño y curación sobre el estado real)
+# ---------------------------------------------------------------------------
+
+def _hp_actual() -> tuple:
+    """Devuelve (hp, hp_max) leyendo el estado real del juego."""
+    from game_engine.state_manager import get_state_manager
+    jugador = get_state_manager().get_state().get("jugador", {})
+    hp = int(jugador.get("hp", 0))
+    hp_max = int(jugador.get("hp_max", jugador.get("hp_maximo", jugador.get("max_hp", hp))))
+    return hp, hp_max
+
+
+@tool
+def damage_player(amount: int, source: str = "desconocido") -> str:
+    """
+    Resta puntos de vida al jugador en el estado real del juego.
+
+    DEBES llamar esta herramienta cada vez que el jugador reciba daño
+    (ataque enemigo, trampa, hechizo, caída), ANTES de narrar el resultado.
+    Usa el daño final ya tirado con execute_dice_roll. No la uses si el ataque falla.
+
+    Args:
+        amount: Puntos de daño finales (entero positivo)
+        source: Qué causó el daño (ej: "espectro", "trampa de pinchos")
+
+    Returns:
+        JSON con hp_anterior, nuevo_hp y si el jugador quedó inconsciente
+    """
+    try:
+        from game_engine.state_manager import get_state_manager
+        sm = get_state_manager()
+        amount = max(0, int(amount))
+        hp_antes, hp_max = _hp_actual()
+        sm.damage_player(amount)
+        hp_despues, _ = _hp_actual()
+        return json.dumps({
+            "hp_anterior": hp_antes,
+            "danio": amount,
+            "fuente": source,
+            "nuevo_hp": hp_despues,
+            "hp_max": hp_max,
+            "inconsciente": hp_despues <= 0,
+        }, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"error": f"No se pudo aplicar el daño: {e}"}, ensure_ascii=False)
+
+
+@tool
+def heal_player(amount: int, source: str = "desconocido") -> str:
+    """
+    Suma puntos de vida al jugador en el estado real del juego.
+
+    DEBES llamar esta herramienta cada vez que el jugador recupere vida
+    (poción, hechizo, descanso), ANTES de narrar el resultado.
+
+    Args:
+        amount: Puntos de vida a recuperar (entero positivo)
+        source: Qué causó la curación (ej: "poción de curación")
+
+    Returns:
+        JSON con hp_anterior, nuevo_hp y hp_max
+    """
+    try:
+        from game_engine.state_manager import get_state_manager
+        sm = get_state_manager()
+        amount = max(0, int(amount))
+        hp_antes, hp_max = _hp_actual()
+        sm.heal_player(amount)
+        hp_despues, _ = _hp_actual()
+        return json.dumps({
+            "hp_anterior": hp_antes,
+            "curacion": amount,
+            "fuente": source,
+            "nuevo_hp": hp_despues,
+            "hp_max": hp_max,
+        }, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"error": f"No se pudo aplicar la curación: {e}"}, ensure_ascii=False)
