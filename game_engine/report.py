@@ -352,12 +352,15 @@ def build_report(summary: str = "", ruta_mapa: str = "") -> dict:
 
     # --- Mapa ------------------------------------------------------------
     if ruta_mapa and Path(ruta_mapa).exists():
-        iw, ih = Image.open(ruta_mapa).size
-        alto_img = ancho_util * ih / iw
+        # El mapa se incrusta como JPEG: el PNG sin pérdida pesaba ~3 MB dentro del PDF
+        mapa_img = Image.open(ruta_mapa).convert("RGB")
+        ruta_jpg = REPORTS_DIR / ".mapa_para_pdf.jpg"
+        mapa_img.save(ruta_jpg, quality=88, optimize=True)
+        alto_img = ancho_util * mapa_img.height / mapa_img.width
         pie = "Ruta recorrida: " + " › ".join(_seguro(n) for n in nombres_ruta) if nombres_ruta else ""
         # Título + imagen + pie en un solo bloque: si no entran, pasan JUNTOS a la página siguiente
         story.append(KeepTogether(_titulo("Mapa del dungeon", e) + [
-            RLImage(ruta_mapa, width=ancho_util, height=alto_img), Paragraph(pie, e["pie"])]))
+            RLImage(str(ruta_jpg), width=ancho_util, height=alto_img), Paragraph(pie, e["pie"])]))
 
     # --- Balance ---------------------------------------------------------
     story += _titulo("Balance de la aventura", e)
