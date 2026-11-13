@@ -166,7 +166,7 @@ def resumen_tool(registro: dict) -> str:
             # Encabezados "[Fuente 1: monsters.txt › Goblin]": se resume el primero
             fuentes = re.findall(r"^\[Fuente \d+: (.+?)\]", salida, flags=re.M)
             if fuentes:
-                return f"{len(fuentes)} fragmentos · {fuentes[0]}"
+                return f"{len(fuentes)} fragmento{'s' if len(fuentes) != 1 else ''} · {fuentes[0]}"
         if nombre == "set_character" and datos and "nombre" in datos:
             return f"{datos['nombre']} · {datos.get('raza', '')} {datos.get('clase', '')}".strip()
         if nombre == "manage_enemy" and datos and "nombre" in datos:

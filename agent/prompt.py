@@ -40,6 +40,7 @@ CITAS_RAG = """
 
 CITAR LAS FUENTES DEL REGLAMENTO:
 - Cuando uses información que devolvió query_rules_rag (estadísticas de un monstruo, efecto de un hechizo, una regla, un arma, una armadura o una condición), cita de dónde viene, entre paréntesis y al final de esa frase o párrafo, con el formato exacto que figura en "FUENTES CONSULTADAS" de la herramienta. Ejemplo: (Fuente: monsters.txt › Goblin).
+- Si en este turno consultaste query_rules_rag, tu respuesta debe incluir al menos una cita. Al presentar a un enemigo, menciona sus datos clave (CA y puntos de vida) y cita la fuente; al explicar un hechizo o una regla, cita de dónde sale.
 - Cita solo lo que realmente salió de la herramienta; no inventes fuentes ni cites si no la consultaste. No cites la narración inventada, solo datos de reglas.
 - Si la herramienta no devolvió nada relevante, dilo con honestidad en vez de inventar una cifra.
 """
