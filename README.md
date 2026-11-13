@@ -2,7 +2,7 @@
 
 Trabajo Integrador de **Modelos de Lenguaje** (UTN FRM, 2026).
 
-Un Dungeon Master virtual construido con un **agente de LangChain** (`create_agent`). Narra la aventura, consulta el reglamento oficial (SRD 5.1) con **RAG**, resuelve el azar con tiradas de dados reales, mantiene la vida del personaje en un estado persistente y dibuja el **mapa del dungeon**, que se puede descargar como PNG. La interfaz web muestra **en vivo** qué hace el agente: su razonamiento, cada herramienta con sus argumentos y el resultado, y la respuesta final.
+Un Dungeon Master virtual construido con un **agente de LangChain** (`create_agent`). Narra la aventura, consulta el reglamento oficial (SRD 5.1) con **RAG**, resuelve el azar con tiradas de dados reales, mantiene la vida del personaje en un estado persistente y dibuja el **mapa ilustrado del dungeon** (con niebla de guerra y la ruta recorrida). Al terminar la partida genera la **crónica de la aventura en PDF**: el producto final, que se puede descargar. La interfaz web muestra **en vivo** qué hace el agente: su razonamiento, cada herramienta con sus argumentos y el resultado, y la respuesta final.
 
 ## Qué resuelve
 
@@ -19,7 +19,7 @@ Un Dungeon Master virtual construido con un **agente de LangChain** (`create_age
 > 3. **Registra al enemigo** en el combate (se ve en la barra lateral, con su recompensa de XP y oro).
 > 4. **Tira los dados** del ataque contra la CA del jugador (y el daño si impacta).
 > 5. **Aplica el daño** al estado real: baja la vida del jugador o la del enemigo. Si el enemigo cae, el jugador cobra su XP y oro (y puede subir de nivel).
-> 6. Narra el resultado y deja el mapa listo para **descargar** (producto final tangible).
+> 6. Narra el resultado. Al terminar la aventura (*"Terminemos: genera la crónica"*), el agente **genera el PDF de la crónica**, con la ficha, el mapa con la ruta, la cronología y las reglas consultadas, listo para **descargar** (producto final tangible).
 
 ## Arquitectura
 
@@ -38,6 +38,9 @@ flowchart LR
     T --> H["damage_player / heal_player"] --> S[("game_state.json")]
     T --> E["set_character / manage_enemy"] --> S
     T --> P["switch_and_render_map"] --> MAP[("mapa PNG")]
+    T --> G["generate_adventure_report"] --> PDF[("crónica PDF")]
+    S -.-> G
+    MAP -.-> G
 
     A -.->|"eventos: razonamiento,<br/>tool_call, tool_result, texto"| UI
 ```
@@ -63,6 +66,7 @@ flowchart LR
 | `manage_enemy` | **Propia** | Lleva los enemigos del combate: `spawn` (con HP y recompensa), `damage` y `remove`. Al derrotar a uno, el jugador cobra su oro y XP automáticamente y puede subir de nivel. | `action`, `name`, `hp`, `amount`, `xp`, `gold` → JSON con el estado del enemigo y la recompensa |
 | `set_character` | **Propia** | Guarda la ficha del personaje cuando el jugador termina de crearlo. | `name`, `race`, `char_class`, `level` → JSON con la ficha |
 | `switch_and_render_map` | **Propia** + externa (archivo) | Mueve al jugador: revela salas (validadas contra el layout), fija su ubicación y renderiza el mapa con niebla de guerra. | `revealed_nodes: list[str]`, `current_room: str` → texto con salas nuevas, ubicación y PNG en `storage/maps/` |
+| `generate_adventure_report` | **Propia** + externa (genera un documento) | Genera la **crónica de la aventura en PDF** (ReportLab): portada, ficha, resumen, mapa con la ruta, balance de combate, cronología y reglas consultadas. Todos los datos salen del estado del juego; el modelo solo aporta el epílogo. | `summary: str` (epílogo de 3 a 6 frases) → JSON con la ruta del PDF, sus páginas y su tamaño |
 
 **Estado del juego:** vive en `storage/game_state.json` y lo modifican solo las tools (ficha, vida, oro, XP, enemigos, sala actual y ruta, y un registro de eventos de la partida). Cada modificación es una **transacción atómica** bajo un lock: LangGraph puede ejecutar varias tools a la vez en un mismo turno y, sin esto, una pisaría los cambios de otra. En cada turno el agente recibe una línea `[ESTADO: ...]` con los datos reales, así no inventa ni usa valores viejos.
 
@@ -78,12 +82,15 @@ agent/
   prompt.py             # system prompt del DM + reglas
 game_engine/
   state_manager.py      # estado de la partida (vida, oro, salas, enemigos)
-  map_renderer.py       # layout del dungeon y mapa con niebla (Pillow)
+  map_renderer.py       # layout del dungeon y mapa ilustrado con niebla de guerra (Pillow)
+  report.py             # crónica de la aventura en PDF (ReportLab)
 rag/
   data/*.txt            # corpus (6 documentos del SRD)
   retriever.py          # búsqueda en FAISS
 setup_rag.py            # ingesta + chunking + embeddings + índice
+assets/map/             # ilustraciones del mapa y del PDF: íconos de las salas, brújula, ficha, portada, pergamino y niebla (generadas por el equipo con IA)
 storage/vector_db/      # índice FAISS ya construido (incluido en el repo)
+storage/reports/        # PDFs generados (no se versiona)
 .streamlit/config.toml  # tema de la UI
 ui/style.css            # tipografía de lectura de la narración
 ```
@@ -165,7 +172,7 @@ Se abre en <http://localhost:8501>. El índice vectorial ya viene en el reposito
 | **Estado coherente** | Creá tu personaje (`Soy Aldric, humano guerrero`) y mirá cómo la sidebar muestra la ficha. Tras un combate se actualizan la vida, el oro, la XP, la ubicación y los enemigos. |
 | **Memoria** | Después de una tirada preguntá `¿Cuánto salió en esa tirada?`: responde sin que se lo repitas. |
 | **RAG y citas** | Preguntá `¿Qué hace el hechizo Bola de Fuego?`: aparece la consulta de reglas con sus **fuentes consultadas** (al abrir el paso), y la respuesta cita el documento, por ejemplo `(Fuente: spells.txt › Fireball)`. |
-| **Producto tangible** | Tras explorar salas, el botón **Descargar mapa** (en el chat y en la sidebar) exporta el PNG. |
+| **Producto tangible** | Escribí `Terminemos: genera la crónica de la aventura`. El agente llama a `generate_adventure_report` y aparece el botón **Descargar crónica (PDF)**. El mapa también se descarga como PNG (botón de la barra lateral y del chat); **Ampliar** lo muestra a tamaño completo. |
 
 ## RAG: corpus e ingesta (reproducible)
 
@@ -199,6 +206,7 @@ Para regenerar el índice completo, borrá `storage/vector_db/` y ejecutá `pyth
 
 - **Memoria en proceso:** el `InMemorySaver` se pierde al reiniciar Streamlit. Para persistirla bastaría cambiarlo por un checkpointer de SQLite.
 - **Dungeon fijo:** el mapa tiene 8 salas definidas en `game_engine/map_renderer.py`; el agente solo decide cuáles revelar.
+- **Crónica en PDF:** el balance y la cronología se calculan sobre los últimos 300 sucesos del registro (la cronología del PDF muestra los últimos 150). El epílogo lo escribe el modelo y puede agregar color narrativo; los datos de la ficha, el mapa y las cifras salen del estado. Usa fuentes estándar de PDF, por lo que se omiten símbolos que no traen (flechas, emojis).
 - **Ficha simplificada:** se guardan nombre, raza, clase y nivel. Los atributos no se guardan (el DM asigna la matriz estándar al crear el personaje) y la vida máxima es siempre 100.
 - **Oro y XP:** solo se obtienen al derrotar enemigos; no hay botín en cofres.
 - **Bienvenida fija:** es un texto estático (no gasta una llamada al modelo) que se registra en la memoria del agente.
