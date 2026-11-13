@@ -1,25 +1,49 @@
 """
-state_manager.py - Gestor de Estado del Juego
+state_manager.py - Gestor de Estado del Juego (con partidas guardadas)
 
-Estado persistente de la partida en un archivo JSON (jugador, enemigos, mapa y
-registro de eventos).
+Cada PARTIDA vive en su propia carpeta, storage/partidas/<id>/:
 
-Concurrencia: LangGraph puede ejecutar varias tools EN PARALELO dentro de un mismo
-turno (Gemini lo hace), y cada una modifica este estado. Por eso toda modificación
-es una transacción atómica: leer, cambiar y guardar ocurren bajo un único lock
-(reentrante). Sin eso, dos tools simultáneas pisarían los cambios de la otra.
+    estado.json     ficha, vida, enemigos, mapa, ruta y registro de eventos
+    mensajes.json   historial visible del chat (lo que muestra la interfaz)
+    mapa.png        el mapa actual de esa partida
+    informes/       las crónicas en PDF de esa partida
+
+La memoria de la conversación del agente NO está acá: la guarda el checkpointer (SQLite) usando
+el id de la partida como thread_id (ver agent/core.py). Un solo id gobierna los tres almacenes.
+
+Límite conocido: el estado es un singleton del proceso con UNA partida activa a la vez (pensado para
+un jugador). La interfaz reapunta el estado a la partida de la sesión antes de cada turno.
+
+Concurrencia: LangGraph puede ejecutar varias tools EN PARALELO dentro de un mismo turno (Gemini lo
+hace), y cada una modifica este estado. Por eso toda modificación es una transacción atómica: leer,
+cambiar y guardar ocurren bajo un único lock (reentrante). Sin eso, dos tools simultáneas pisarían los
+cambios de la otra.
 """
 import copy
 import json
 import os
 import pathlib
 import re
+import secrets
+import shutil
 import threading
 from contextlib import contextmanager
 from datetime import datetime
 
-# Ruta al archivo de estado del juego
-STATE_FILE = "storage/game_state.json"
+# Carpeta con todas las partidas. Se puede cambiar con DM_PARTIDAS_DIR (las pruebas usan una temporal).
+PARTIDAS_DIR = pathlib.Path(os.getenv("DM_PARTIDAS_DIR", "storage/partidas"))
+
+
+
+def _legacy_file() -> pathlib.Path:
+    """
+    Archivo de estado de versiones anteriores (una sola partida global). Se busca JUNTO a la carpeta de
+    partidas (en producción, storage/game_state.json): si existe y todavía no hay partidas, se importa
+    como la primera para no perder lo que el jugador ya tenía. Con DM_PARTIDAS_DIR apuntando a una
+    carpeta temporal (las pruebas), nunca puede tocar el archivo real.
+    """
+    return PARTIDAS_DIR.parent / "game_state.json"
+
 
 # Máximo de eventos que se conservan en el registro (los más recientes)
 MAX_EVENTOS = 300
@@ -47,6 +71,8 @@ DEFAULT_STATE = {
     "eventos": [],                # registro de la partida: {"t", "tipo", "texto"}
     "sesion_iniciada": "",
 }
+
+_ID_VALIDO = re.compile(r"^[0-9a-z]+(-[0-9a-z]+)*$")
 
 
 def _estado_inicial() -> dict:
@@ -88,9 +114,18 @@ def _slug(texto: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", texto.lower()).strip("_") or "enemigo"
 
 
+def _escribir_json(ruta: pathlib.Path, datos) -> None:
+    """Escritura atómica: se escribe un temporal y se reemplaza, así un corte no deja un JSON a medias."""
+    ruta.parent.mkdir(parents=True, exist_ok=True)
+    tmp = ruta.with_suffix(ruta.suffix + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(datos, f, indent=2, ensure_ascii=False)
+    os.replace(tmp, ruta)
+
+
 class StateManager:
     """
-    Gestor de estado del juego con patrón Singleton.
+    Gestor de estado del juego con patrón Singleton y partidas guardadas.
     Toda escritura pasa por `transaccion()`, que es atómica entre hilos.
     """
 
@@ -110,39 +145,192 @@ class StateManager:
             return
         # RLock: una transacción puede llamar a load_state/save_state sin bloquearse
         self._lock = threading.RLock()
-        self._init_state()
+        self._id = None
+        self._abrir_inicial()
         self._initialized = True
 
-    def _init_state(self):
-        """Crea el archivo de estado si no existe; si está corrupto, lo reinicia."""
-        state_path = pathlib.Path(STATE_FILE)
-        state_path.parent.mkdir(parents=True, exist_ok=True)
+    # -------------------------------------------------------------------------
+    # Partidas: carpeta, listado, apertura y borrado
+    # -------------------------------------------------------------------------
 
-        if not state_path.exists():
-            self.save_state(_estado_inicial())
-            return
-        try:
-            self.load_state()
-        except (json.JSONDecodeError, KeyError):
-            self.save_state(_estado_inicial())
+    @property
+    def id_activa(self) -> str:
+        """Id de la partida activa."""
+        return self._id
+
+    @property
+    def dir_partida(self) -> pathlib.Path:
+        return PARTIDAS_DIR / self._id
+
+    @property
+    def ruta_estado(self) -> pathlib.Path:
+        return self.dir_partida / "estado.json"
+
+    @property
+    def ruta_mensajes(self) -> pathlib.Path:
+        return self.dir_partida / "mensajes.json"
+
+    @property
+    def ruta_mapa(self) -> pathlib.Path:
+        """Imagen del mapa de la partida activa."""
+        return self.dir_partida / "mapa.png"
+
+    @property
+    def dir_informes(self) -> pathlib.Path:
+        """Carpeta de las crónicas en PDF de la partida activa (se crea al pedirla)."""
+        d = self.dir_partida / "informes"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    @staticmethod
+    def _escribir_activa(partida_id: str) -> None:
+        PARTIDAS_DIR.mkdir(parents=True, exist_ok=True)
+        (PARTIDAS_DIR / ".activa").write_text(partida_id, encoding="utf-8")
+
+    @staticmethod
+    def _crear_carpeta(estado: dict = None) -> str:
+        """Crea la carpeta de una partida nueva y devuelve su id (legible y ordenable por fecha)."""
+        partida_id = f"{datetime.now():%Y%m%d-%H%M%S}-{secrets.token_hex(2)}"
+        _escribir_json(PARTIDAS_DIR / partida_id / "estado.json", estado if estado is not None else _estado_inicial())
+        return partida_id
+
+    def _abrir_inicial(self):
+        """
+        Elige la partida con la que arranca el proceso: la que estaba activa (así recargar la página
+        no pierde nada), si no la más reciente, y si no existe ninguna, crea una nueva.
+        Si venimos de una versión anterior, su partida única se importa primero.
+        """
+        PARTIDAS_DIR.mkdir(parents=True, exist_ok=True)
+        existentes = self.listar_partidas()
+
+        legacy = _legacy_file()
+        if not existentes and legacy.exists():
+            try:
+                with open(legacy, "r", encoding="utf-8") as f:
+                    self._id = self._crear_carpeta(_migrar(json.load(f)))
+                legacy.replace(legacy.with_suffix(".json.migrado"))
+                self._escribir_activa(self._id)
+                return
+            except (OSError, json.JSONDecodeError):
+                pass                                  # estado viejo ilegible: se empieza de cero
+
+        activa_file = PARTIDAS_DIR / ".activa"
+        if activa_file.exists():
+            activa = activa_file.read_text(encoding="utf-8").strip()
+            if _ID_VALIDO.match(activa) and (PARTIDAS_DIR / activa / "estado.json").exists():
+                self._id = activa
+                return
+        if existentes:
+            self._id = existentes[0]["id"]
+        else:
+            self._id = self._crear_carpeta()
+        self._escribir_activa(self._id)
+
+    def nueva_partida(self) -> str:
+        """Crea una partida nueva, la deja activa y devuelve su id. Las anteriores NO se tocan."""
+        with self._lock:
+            self._id = self._crear_carpeta()
+            self._escribir_activa(self._id)
+            return self._id
+
+    def abrir_partida(self, partida_id: str) -> bool:
+        """Activa una partida existente. Devuelve False si el id no es válido o no existe."""
+        if not isinstance(partida_id, str) or not _ID_VALIDO.match(partida_id):
+            return False
+        with self._lock:
+            if self._id == partida_id:
+                return True
+            if not (PARTIDAS_DIR / partida_id / "estado.json").exists():
+                return False
+            self._id = partida_id
+            self._escribir_activa(partida_id)
+            return True
+
+    def borrar_partida(self, partida_id: str) -> str:
+        """
+        Borra una partida (su estado, historial, mapa e informes). Si era la activa, pasa a la más
+        reciente de las que quedan, o crea una nueva si no queda ninguna. Devuelve el id activo.
+        La memoria de la conversación del agente la borra quien llama (core.clear_conversation).
+        """
+        with self._lock:
+            if _ID_VALIDO.match(partida_id or "") and (PARTIDAS_DIR / partida_id).is_dir():
+                shutil.rmtree(PARTIDAS_DIR / partida_id, ignore_errors=True)
+            if self._id == partida_id or not (PARTIDAS_DIR / (self._id or "") / "estado.json").exists():
+                restantes = self.listar_partidas()
+                self._id = restantes[0]["id"] if restantes else self._crear_carpeta()
+                self._escribir_activa(self._id)
+            return self._id
+
+    def listar_partidas(self) -> list:
+        """
+        Partidas guardadas, la más reciente primero. Cada una: id, nombre, raza, clase, nivel,
+        ficha_creada, salas, turnos (mensajes del jugador), actualizado (datetime) y activa.
+        """
+        partidas = []
+        if not PARTIDAS_DIR.exists():
+            return partidas
+        for carpeta in PARTIDAS_DIR.iterdir():
+            archivo = carpeta / "estado.json"
+            if not carpeta.is_dir() or not archivo.exists():
+                continue
+            try:
+                with open(archivo, "r", encoding="utf-8") as f:
+                    estado = _migrar(json.load(f))
+                mtime = archivo.stat().st_mtime
+            except (OSError, json.JSONDecodeError):
+                continue                               # estado dañado: la carpeta no rompe el listado
+            # El historial se lee aparte: si está dañado la partida SIGUE apareciendo (con 0 turnos)
+            turnos = 0
+            msgs = carpeta / "mensajes.json"
+            if msgs.exists():
+                try:
+                    with open(msgs, "r", encoding="utf-8") as f:
+                        turnos = sum(1 for m in json.load(f) if isinstance(m, dict) and m.get("role") == "user")
+                    mtime = max(mtime, msgs.stat().st_mtime)
+                except (OSError, json.JSONDecodeError):
+                    pass
+            j = estado["jugador"]
+            partidas.append({
+                "id": carpeta.name, "nombre": j["nombre"], "raza": j["raza"], "clase": j["clase"],
+                "nivel": j["nivel"], "ficha_creada": j["ficha_creada"],
+                "salas": len(estado["salas_descubiertas"]), "turnos": turnos,
+                "actualizado": datetime.fromtimestamp(mtime), "activa": carpeta.name == self._id,
+            })
+        return sorted(partidas, key=lambda p: p["actualizado"], reverse=True)
 
     # -------------------------------------------------------------------------
-    # Persistencia y transacciones
+    # Historial visible del chat (mensajes.json)
+    # -------------------------------------------------------------------------
+
+    def guardar_mensajes(self, mensajes: list) -> None:
+        """Guarda el historial visible de la partida activa (escritura atómica)."""
+        with self._lock:
+            _escribir_json(self.ruta_mensajes, mensajes)
+
+    def cargar_mensajes(self) -> list:
+        """Historial visible de la partida activa; lista vacía si no hay o está dañado."""
+        with self._lock:
+            try:
+                with open(self.ruta_mensajes, "r", encoding="utf-8") as f:
+                    datos = json.load(f)
+                return datos if isinstance(datos, list) else []
+            except (OSError, json.JSONDecodeError):
+                return []
+
+    # -------------------------------------------------------------------------
+    # Persistencia y transacciones del estado de juego
     # -------------------------------------------------------------------------
 
     def load_state(self) -> dict:
-        """Carga el estado desde el JSON (completando las claves nuevas si faltan)."""
+        """Carga el estado de la partida activa (completando las claves nuevas si faltan)."""
         with self._lock:
-            with open(STATE_FILE, "r", encoding="utf-8") as f:
+            with open(self.ruta_estado, "r", encoding="utf-8") as f:
                 return _migrar(json.load(f))
 
     def save_state(self, state: dict):
-        """Guarda el estado en el JSON."""
+        """Guarda el estado de la partida activa."""
         with self._lock:
-            state_path = pathlib.Path(STATE_FILE)
-            state_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(STATE_FILE, "w", encoding="utf-8") as f:
-                json.dump(state, f, indent=2, ensure_ascii=False)
+            _escribir_json(self.ruta_estado, state)
 
     @contextmanager
     def transaccion(self):
@@ -387,12 +575,9 @@ class StateManager:
         return self.load_state()
 
     def reset_state(self):
-        """Reinicia la partida: borra el archivo de estado y crea uno nuevo por defecto."""
+        """Devuelve la partida ACTIVA al estado inicial (ficha, vida, mapa y registro). No toca otras partidas."""
         with self._lock:
-            state_path = pathlib.Path(STATE_FILE)
-            if state_path.exists():
-                os.remove(STATE_FILE)
-            self._init_state()
+            self.save_state(_estado_inicial())
 
     # Alias de compatibilidad
     def reveal_room(self, room_id: str) -> bool:

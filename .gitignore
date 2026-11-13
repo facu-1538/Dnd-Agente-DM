@@ -27,3 +27,7 @@ storage/game_state.json
 
 # Crónicas generadas (PDF) por la tool generate_adventure_report
 storage/reports/
+
+# Partidas guardadas y memoria persistente del agente (datos del jugador, no se versionan)
+storage/partidas/
+storage/memoria.db*
