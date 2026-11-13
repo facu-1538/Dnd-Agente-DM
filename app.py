@@ -165,12 +165,23 @@ def resumen_tool(registro: dict) -> str:
     return primera.strip()[:80]
 
 
+def pista_args(entrada: dict) -> str:
+    """Pista corta de los argumentos, para el título del paso mientras la tool aún corre."""
+    if not entrada:
+        return ""
+    pista = ", ".join(f"{k}={v}" for k, v in list(entrada.items())[:2])
+    return pista if len(pista) <= 70 else pista[:69] + "…"
+
+
 def etiqueta_tool(registro: dict) -> str:
-    """Título del paso: icono de color, nombre legible y resumen del resultado."""
+    """
+    Título del paso: icono de color, nombre legible y, mientras la tool corre, una pista
+    de sus argumentos; al terminar, el resumen del resultado.
+    """
     nombre = registro.get("name", "tool")
     icono, titulo = TOOL_UI.get(nombre, (":gray[:material/build:]", nombre))
-    resumen = resumen_tool(registro)
-    return f"{icono} **{titulo}**" + (f" · {resumen}" if resumen else "")
+    detalle = resumen_tool(registro) or pista_args(registro.get("input", {}))
+    return f"{icono} **{titulo}**" + (f" · {detalle}" if detalle else "")
 
 
 def estado_tool(registro: dict) -> str:
@@ -257,7 +268,11 @@ def nueva_partida():
 
     if _state_manager_available:
         try:
-            get_state_manager().reset_state()
+            sm = get_state_manager()
+            sm.reset_state()
+            # El PNG del mapa es lo que se descarga: hay que volver a dibujar la niebla inicial
+            from game_engine.map_renderer import get_map_renderer
+            get_map_renderer().render_fog_of_war(discovered_rooms=sm.get_discovered_rooms())
         except Exception as e:
             st.toast(f"No se pudo reiniciar el estado: {e}", icon=":material/error:")
     # No hace falta st.rerun(): se usa como callback on_click y Streamlit re-ejecuta solo.
@@ -451,9 +466,12 @@ if prompt := st.chat_input("¿Qué hace tu personaje?", submit_mode="disable"):
             elif tipo == "tool_call":
                 registro = {"name": ev["name"], "input": ev["args"], "output": ""}
                 tool_calls.append(registro)
-                # Separar el texto previo a la tool del que venga después
+                # El modelo puede razonar y hablar en varias llamadas dentro de un mismo turno:
+                # se separa lo anterior a la tool de lo que venga después
                 if texto and not texto.endswith("\n\n"):
                     texto += "\n\n"
+                if razonamiento and not razonamiento.endswith("\n\n"):
+                    razonamiento += "\n\n"
                 # El paso aparece apenas el agente decide invocar la tool, ya con sus argumentos
                 with tools_box:
                     estado = st.status(etiqueta_tool(registro), type="step", state="running")
