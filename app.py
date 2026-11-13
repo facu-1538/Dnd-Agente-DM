@@ -13,6 +13,7 @@ tipografía de lectura de la narración está en ui/style.css.
 
 import html
 import json
+import unicodedata
 import os
 import re
 import time
@@ -383,6 +384,43 @@ def ver_mapa_grande():
         st.image(str(ruta_mapa()), width="stretch", alt="Mapa ilustrado de la mazmorra con las salas exploradas")
 
 
+# Aspecto de la ficha: emoji de la raza y ícono (Material) de la clase, cada uno con su color
+_RAZAS = {"humano": ("🧑", "#e3a73b"), "elfo": ("🧝", "#5fd08a"), "enano": ("⛏️", "#d98b4a"),
+          "mediano": ("🍀", "#8fc96b"), "semielfo": ("🧝", "#7fd6b0"), "semiorco": ("🗡️", "#9bb36a"),
+          "tiefling": ("😈", "#d6577a"), "draconido": ("🐉", "#e0834d"), "gnomo": ("🔧", "#c58be0")}
+_CLASES = {"guerrero": ("swords", "#e0584d"), "mago": ("auto_fix_high", "#8b7bff"),
+           "picaro": ("visibility_off", "#4fc3d9"), "clerigo": ("health_and_safety", "#f0d98a"),
+           "barbaro": ("local_fire_department", "#f0883e"), "paladin": ("shield", "#e8c04a"),
+           "explorador": ("forest", "#6fcf97"), "guardabosques": ("forest", "#6fcf97"),
+           "bardo": ("music_note", "#e58bd0"), "druida": ("eco", "#7ed67e"), "brujo": ("dark_mode", "#a56bd9"),
+           "hechicero": ("bolt", "#f2c94c"), "monje": ("self_improvement", "#8fd0f0")}
+
+
+def _clave(texto: str) -> str:
+    """Minúsculas y sin tildes, para buscar la raza/clase en las tablas de arriba."""
+    return unicodedata.normalize("NFD", str(texto).lower()).encode("ascii", "ignore").decode().strip()
+
+
+def html_ficha(info: dict) -> str:
+    """Tarjeta del personaje: nombre grande, raza y clase con ícono y color, y el nivel en una insignia."""
+    nombre = html.escape(str(info.get("nombre") or "Aventurero"))
+    if not info.get("ficha_creada"):
+        return (f'<div class="ficha"><div class="ficha-cuerpo"><div class="ficha-nombre">{nombre}</div>'
+                '<div class="ficha-vacia">Personaje sin crear</div></div></div>')
+    raza, clase = str(info.get("raza") or "").strip(), str(info.get("clase") or "").strip()
+    emoji, c_raza = _RAZAS.get(_clave(raza), ("✨", "#b9b6cc"))
+    icono, c_clase = _CLASES.get(_clave(clase), ("shield_person", "#b9b6cc"))
+    chips = ""
+    if raza:
+        chips += f'<span class="chip" style="--c:{c_raza}"><span class="emoji">{emoji}</span>{html.escape(raza.capitalize())}</span>'
+    if clase:
+        chips += f'<span class="chip" style="--c:{c_clase}"><span class="ms">{icono}</span>{html.escape(clase.capitalize())}</span>'
+    nivel = html.escape(str(info.get("nivel", 1)))
+    return (f'<div class="ficha"><div class="ficha-cuerpo"><div class="ficha-nombre">{nombre}</div>'
+            f'<div class="ficha-chips">{chips}</div></div>'
+            f'<div class="nivel" title="Nivel {nivel}"><b>{nivel}</b><small>NIVEL</small></div></div>')
+
+
 def hace_tiempo(cuando: datetime) -> str:
     """'recién', 'hace 5 min', 'hace 3 h', 'ayer' o la fecha."""
     seg = (datetime.now() - cuando).total_seconds()
@@ -474,14 +512,11 @@ with st.sidebar:
             hp, max_hp, info = None, None, {}
 
         if hp is not None and max_hp:
-            st.markdown(f"#### :orange[:material/shield_person:] {info.get('nombre', 'Aventurero')}")
-            if info.get("ficha_creada"):
-                st.caption(f"{info.get('raza', '')} {info.get('clase', '?')} · Nivel {info.get('nivel', '?')}".strip())
-            else:
-                st.caption("Personaje sin crear")
+            st.html(html_ficha(info))
 
-            st.markdown(f":red[:material/favorite:] **Vida** &nbsp; {hp} / {max_hp}")
-            st.progress(max(0.0, min(1.0, hp / max_hp)))
+            with st.container(key="vida"):
+                st.markdown(f":red[:material/favorite:] **Vida** &nbsp; {hp} / {max_hp}")
+                st.progress(max(0.0, min(1.0, hp / max_hp)))
 
             col_oro, col_xp = st.columns(2)
             col_oro.markdown(f":orange[:material/paid:] **{info.get('oro', 0)}** oro")
