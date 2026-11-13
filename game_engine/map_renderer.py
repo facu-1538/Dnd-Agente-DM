@@ -80,7 +80,7 @@ DUNGEON_LAYOUT = {
 # -------------------------------------------------------------------------
 
 ASSETS_DIR = pathlib.Path("assets/map")
-SALIDA_ACTUAL = "storage/maps/current_view.png"
+SALIDA_ACTUAL = "storage/maps/current_view.png"   # solo como respaldo: cada partida guarda su mapa en su carpeta
 SALIDA_BASE = "storage/maps/base_dungeon.png"
 
 # Lienzo de salida: la proporción 3:2 del pergamino ilustrado.
@@ -436,8 +436,10 @@ class MapRenderer:
 
         descubiertas = {s for s in discovered_rooms if s in DUNGEON_LAYOUT}
         lienzo = self._componer(descubiertas, current_room, route, hero_name)
-        lienzo.convert("RGB").save(SALIDA_ACTUAL, compress_level=3)
-        return SALIDA_ACTUAL
+        destino = self._ruta_mapa()
+        destino.parent.mkdir(parents=True, exist_ok=True)
+        lienzo.convert("RGB").save(destino, compress_level=3)
+        return str(destino)
 
     def generate_base_map(self) -> str:
         """Mapa completo, sin niebla (útil para depurar o para mostrar el dungeon entero)."""
@@ -445,10 +447,19 @@ class MapRenderer:
         lienzo.convert("RGB").save(SALIDA_BASE, compress_level=3)
         return SALIDA_BASE
 
+    @staticmethod
+    def _ruta_mapa() -> pathlib.Path:
+        """Dónde se guarda el mapa: dentro de la carpeta de la partida activa (cada una tiene el suyo)."""
+        try:
+            from game_engine.state_manager import get_state_manager
+            return get_state_manager().ruta_mapa
+        except Exception:
+            return pathlib.Path(SALIDA_ACTUAL)               # respaldo si no hay gestor de partidas
+
     def get_current_map_path(self) -> str:
-        """Ruta del mapa actual; si todavía no existe, lo dibuja con la partida en curso."""
-        if pathlib.Path(SALIDA_ACTUAL).exists():
-            return SALIDA_ACTUAL
+        """Ruta del mapa de la partida activa; si todavía no existe, lo dibuja."""
+        if self._ruta_mapa().exists():
+            return str(self._ruta_mapa())
         try:
             from game_engine.state_manager import get_state_manager
             return self.render_fog_of_war(get_state_manager().get_discovered_rooms())

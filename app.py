@@ -83,7 +83,12 @@ except ImportError as e:
 _vector_db_path = Path("storage/vector_db")
 _vectorstore_available = _vector_db_path.exists() and any(_vector_db_path.iterdir())
 
-MAPA_PATH = Path("storage/maps/current_view.png")
+
+
+def ruta_mapa() -> Path:
+    """Mapa de la partida activa (cada partida guarda el suyo en su carpeta)."""
+    return get_state_manager().ruta_mapa if _state_manager_available else Path("storage/maps/current_view.png")
+
 
 # ---------------------------------------------------------------------------
 # SESSION STATE
@@ -321,10 +326,10 @@ def uso_mapa(tool_calls: list) -> bool:
 
 def boton_descarga_mapa(key: str, etiqueta: str = "Descargar mapa", ancho: str = "content"):
     """Botón para exportar el mapa actual (PNG). `key` debe ser único en la página."""
-    if MAPA_PATH.exists():
+    if ruta_mapa().exists():
         st.download_button(
             etiqueta,
-            data=MAPA_PATH.read_bytes(),
+            data=ruta_mapa().read_bytes(),
             file_name="mapa_dungeon.png",
             mime="image/png",
             icon=":material/download:",
@@ -336,8 +341,8 @@ def boton_descarga_mapa(key: str, etiqueta: str = "Descargar mapa", ancho: str =
 @st.dialog("Mapa de la mazmorra", width="large")
 def ver_mapa_grande():
     """El mapa a tamaño completo: en la barra lateral mide ~300 px y los nombres no se leen."""
-    if MAPA_PATH.exists():
-        st.image(str(MAPA_PATH), width="stretch", alt="Mapa ilustrado de la mazmorra con las salas exploradas")
+    if ruta_mapa().exists():
+        st.image(str(ruta_mapa()), width="stretch", alt="Mapa ilustrado de la mazmorra con las salas exploradas")
         boton_descarga_mapa("descargar_mapa_dialogo")
 
 
@@ -421,8 +426,8 @@ with st.sidebar:
 
     # --- Mapa del dungeon (producto tangible de la partida) ---
     st.markdown("#### :green[:material/map:] Mapa")
-    if MAPA_PATH.exists():
-        st.image(str(MAPA_PATH), width="stretch", alt="Mapa del dungeon con las salas exploradas")
+    if ruta_mapa().exists():
+        st.image(str(ruta_mapa()), width="stretch", alt="Mapa del dungeon con las salas exploradas")
         col_ampliar, col_descargar = st.columns(2)
         with col_ampliar:
             if st.button("Ampliar", icon=":material/zoom_in:", key="ampliar_mapa", width="stretch"):

@@ -28,7 +28,9 @@ from reportlab.platypus import (
 )
 
 ASSETS = Path("assets/map")
-REPORTS_DIR = Path("storage/reports")
+# Carpeta de salida. None = la carpeta "informes" de la partida activa (lo normal); se puede fijar
+# a mano, por ejemplo en las pruebas.
+REPORTS_DIR = None
 
 # Paleta (la misma de la interfaz y del mapa)
 TINTA = colors.HexColor("#2A2320")
@@ -294,14 +296,15 @@ def build_report(summary: str = "", ruta_mapa: str = "") -> dict:
     ancho_util = A4[0] - 2 * 54
 
     # Fondos: portada, y el pergamino girado a vertical para las páginas interiores
-    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    carpeta = Path(REPORTS_DIR) if REPORTS_DIR else get_state_manager().dir_informes
+    carpeta.mkdir(parents=True, exist_ok=True)
     portada = ImageReader(str(ASSETS / "portada.jpg"))
     # El pergamino se gira a vertical y se guarda en un archivo: ReportLab incrusta UNA sola vez
     # las imágenes que se dibujan por ruta (con un objeto PIL se duplicaba en cada página).
-    ruta_perg = REPORTS_DIR / ".pergamino_vertical.jpg"
+    ruta_perg = carpeta / ".pergamino_vertical.jpg"
     Image.open(ASSETS / "fondo_pergamino.jpg").rotate(90, expand=True).save(ruta_perg, quality=85)
     pergamino = ImageReader(str(ruta_perg))
-    pdf_path = REPORTS_DIR / f"cronica_{_slug(j['nombre'])}_{datetime.now():%Y%m%d_%H%M%S}.pdf"
+    pdf_path = carpeta / f"cronica_{_slug(j['nombre'])}_{datetime.now():%Y%m%d_%H%M%S}.pdf"
 
     doc = BaseDocTemplate(
         str(pdf_path), pagesize=A4, leftMargin=54, rightMargin=54, topMargin=62, bottomMargin=62,
@@ -354,7 +357,7 @@ def build_report(summary: str = "", ruta_mapa: str = "") -> dict:
     if ruta_mapa and Path(ruta_mapa).exists():
         # El mapa se incrusta como JPEG: el PNG sin pérdida pesaba ~3 MB dentro del PDF
         mapa_img = Image.open(ruta_mapa).convert("RGB")
-        ruta_jpg = REPORTS_DIR / ".mapa_para_pdf.jpg"
+        ruta_jpg = carpeta / ".mapa_para_pdf.jpg"
         mapa_img.save(ruta_jpg, quality=88, optimize=True)
         alto_img = ancho_util * mapa_img.height / mapa_img.width
         pie = "Ruta recorrida: " + " › ".join(_seguro(n) for n in nombres_ruta) if nombres_ruta else ""
