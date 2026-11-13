@@ -34,6 +34,12 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# Marca en la cabecera de la barra lateral (como ChatGPT o Claude): ocupa la franja superior
+# que Streamlit reserva siempre, y con la barra colapsada se muestra solo el ícono.
+_logo, _logo_icono = Path("assets/logo.png"), Path("assets/logo_icono.png")
+if _logo.exists():
+    st.logo(str(_logo), size="large", icon_image=str(_logo_icono) if _logo_icono.exists() else None)
+
 # Tipografía de lectura de la narración (el resto del estilo vive en config.toml)
 _css = Path(__file__).parent / "ui" / "style.css"
 if _css.exists():
