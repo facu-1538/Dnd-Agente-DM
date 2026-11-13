@@ -172,11 +172,14 @@ Se abre en <http://localhost:8501>. El índice vectorial ya viene en el reposito
 | **Tarea de varios pasos** | Escribí `Un goblin me ataca en la armería.` y mirá la secuencia de herramientas. |
 | **Visibilidad de tools (streaming)** | Cada herramienta aparece en la línea de tiempo apenas se invoca, con sus argumentos; al terminar muestra el resumen del resultado. Al abrirla se ve el resultado completo. |
 | **Razonamiento** | Bloque "Razonamiento", diferenciado de la respuesta. Se muestra en vivo mientras el modelo piensa. |
-| **Pasos abiertos** | El interruptor **Mostrar pasos abiertos** (sidebar, activo por defecto) despliega el razonamiento y cada herramienta; apagado, la vista es compacta. Cada paso muestra cuánto tardó y cada turno cierra con `N herramientas · X s`. |
+| **Pasos abiertos** | Mientras el agente responde, el razonamiento y cada herramienta se ven desplegados; **al terminar se cierran** y se abren con un clic. El interruptor **Dejar los pasos abiertos** (pestaña Partida, debajo del mapa) los deja abiertos. Cada paso muestra cuánto tardó y cada turno cierra con `N herramientas · X s`. |
 | **Estado coherente** | Creá tu personaje (`Soy Aldric, humano guerrero`) y mirá cómo la sidebar muestra la ficha. Tras un combate se actualizan la vida, el oro, la XP, la ubicación y los enemigos. |
-| **Memoria** | Después de una tirada preguntá `¿Cuánto salió en esa tirada?`: responde sin que se lo repitas. |
+| **Tiradas de dados** | Cada tirada muestra, debajo de su paso, una tarjeta con un d20 animado, el número, la cuenta (`7 + 4 = 11`), la dificultad y el veredicto (**ÉXITO** / **FALLO**, y ¡CRÍTICO! o ¡PIFIA! con un 20 o un 1 natural). |
+| **Memoria** | Después de una tirada preguntá `¿Cuánto salió en esa tirada?`: responde sin que se lo repitas. La memoria es persistente: recargá la página (F5) o reiniciá Streamlit y el agente sigue acordándose. |
+| **Partidas guardadas** | Jugá un par de turnos y recargá la página: vuelve la misma partida con todo el chat. **Nueva partida** crea otra; la pestaña **Historial** abre o borra las guardadas, y al abrir una se pasa a **Partida** para ver sus stats. |
+| **Navegación del chat** | En el borde derecho aparece un riel con un punto por cada mensaje tuyo: al pasar el mouse muestra su mini título y al hacer clic salta a esa parte de la conversación. |
 | **RAG y citas** | Preguntá `¿Qué hace el hechizo Bola de Fuego?`: aparece la consulta de reglas con sus **fuentes consultadas** (al abrir el paso), y la respuesta cita el documento, por ejemplo `(Fuente: spells.txt › Fireball)`. |
-| **Producto tangible** | Escribí `Terminemos: genera la crónica de la aventura`. El agente llama a `generate_adventure_report` y aparece el botón **Descargar crónica (PDF)**. El mapa también se descarga como PNG (botón de la barra lateral y del chat); **Ampliar** lo muestra a tamaño completo. |
+| **Producto tangible** | Escribí `Terminemos: genera la crónica de la aventura`. El agente llama a `generate_adventure_report` y aparece el botón **Descargar crónica (PDF)**. El mapa también se puede descargar desde el chat. Tocando el mapa de la barra lateral se abre en grande, centrado y sin scroll, con **zoom de rueda**, arrastre, doble clic y un botón de descarga. |
 
 ## RAG: corpus e ingesta (reproducible)
 
