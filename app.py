@@ -190,7 +190,7 @@ except ImportError as e:
 
 # Importar el agente principal con manejo de errores
 try:
-    from agent.core import run_agent
+    from agent.core import run_agent, stream_agent, clear_conversation
     _agent_available = True
 except ImportError as e:
     _agent_available = False
@@ -259,7 +259,7 @@ def renderizar_tool_calls(tool_calls: list):
             icono = "⚙️"
             titulo = f"Ejecutando: {nombre}"
 
-        with st.expander(f"{icono} {titulo}", expanded=False):
+        with st.expander(f"{icono} {titulo} · {nombre}", expanded=False):
             if entrada:
                 st.markdown("**Parámetros:**")
                 # Mostrar parámetros de forma legible
@@ -294,10 +294,41 @@ def renderizar_tool_calls(tool_calls: list):
                         st.markdown(texto)
 
 
+def boton_descarga_mapa(key: str):
+    """Botón para descargar el mapa actual (PNG). `key` debe ser único en toda la página."""
+    mapa = Path("storage/maps/current_view.png")
+    if mapa.exists():
+        st.download_button(
+            "⬇️ Descargar mapa (PNG)",
+            data=mapa.read_bytes(),
+            file_name="mapa_dungeon.png",
+            mime="image/png",
+            key=key,
+        )
+
+
+def uso_mapa(tool_calls: list) -> bool:
+    """True si en estas tool calls el agente actualizó el mapa."""
+    return any(tc.get("name") == "switch_and_render_map" for tc in tool_calls)
+
+
+def renderizar_razonamiento(texto: str):
+    """Muestra el razonamiento del modelo (historial), diferenciado de la respuesta final."""
+    with st.expander("🧠 Razonamiento del modelo", expanded=False):
+        st.markdown(texto)
+
+
 def nueva_partida():
     """
     Reinicia el estado del juego y limpia el historial de mensajes.
     """
+    # Liberar la memoria (checkpointer) del hilo anterior
+    if _agent_available:
+        try:
+            clear_conversation(st.session_state.thread_id)
+        except Exception:
+            pass
+
     # Limpiar el historial de chat
     st.session_state.messages = []
     st.session_state.welcomed = False
@@ -372,6 +403,15 @@ with st.sidebar:
     mapa_path = Path("storage/maps/current_view.png")
     if mapa_path.exists():
         st.image(str(mapa_path), width="stretch", caption="Vista actual del dungeon")
+        # Exportar el mapa: es el producto tangible de la partida
+        st.download_button(
+            "⬇️ Descargar mapa (PNG)",
+            data=mapa_path.read_bytes(),
+            file_name="mapa_dungeon.png",
+            mime="image/png",
+            width="stretch",
+            key="descargar_mapa",
+        )
     else:
         st.markdown("""
 <div style="
@@ -483,12 +523,16 @@ if not st.session_state.messages:
 # HISTORIAL DE MENSAJES
 # ---------------------------------------------------------------------------
 
-for mensaje in st.session_state.messages:
+for idx, mensaje in enumerate(st.session_state.messages):
     rol = mensaje["role"]
     contenido = mensaje["content"]
     tool_calls = mensaje.get("tool_calls", [])
 
     with st.chat_message(rol, avatar="🎲" if rol == "assistant" else "🧙"):
+        # Razonamiento del modelo (si lo hubo), antes de las tools y de la respuesta
+        if mensaje.get("reasoning") and rol == "assistant":
+            renderizar_razonamiento(mensaje["reasoning"])
+
         # Si hay tool calls, mostrarlos en expanders primero
         if tool_calls and rol == "assistant":
             renderizar_tool_calls(tool_calls)
@@ -496,11 +540,16 @@ for mensaje in st.session_state.messages:
         # Mostrar el contenido del mensaje
         st.markdown(texto_de(contenido))
 
+        # Si ese turno actualizó el mapa, ofrecer exportarlo desde el chat
+        if rol == "assistant" and uso_mapa(tool_calls):
+            boton_descarga_mapa(f"dl_mapa_{idx}")
+
 # ---------------------------------------------------------------------------
 # INPUT DEL USUARIO
 # ---------------------------------------------------------------------------
 
-if prompt := st.chat_input("¿Qué hace tu personaje?"):
+# submit_mode="disable": mientras el agente trabaja no se puede enviar otro mensaje
+if prompt := st.chat_input("¿Qué hace tu personaje?", submit_mode="disable"):
 
     # 1. Agregar mensaje del usuario al historial y mostrarlo
     st.session_state.messages.append({
@@ -513,48 +562,78 @@ if prompt := st.chat_input("¿Qué hace tu personaje?"):
         st.markdown(prompt)
 
     # 2. Llamar al agente y mostrar la respuesta
+    # El orden visual es fijo: razonamiento, tools (en el orden en que se invocan) y respuesta.
+    # Se reservan los tres espacios y se van llenando en vivo con los eventos del agente.
     with st.chat_message("assistant", avatar="🎲"):
-        with st.spinner("🔮 El Dungeon Master consulta los arcanos..."):
-            try:
-                # Llamar al agente principal
-                resultado = run_agent(prompt, thread_id=st.session_state.thread_id)
-                respuesta = texto_de(resultado.get("response", "El Dungeon Master guarda silencio..."))
-                tool_calls = resultado.get("tool_calls", [])
+        razon_box = st.container()
+        tools_box = st.container()
+        texto_box = st.empty()
+        texto_box.caption("🔮 El Dungeon Master consulta los arcanos...")  # hasta el primer token
 
-                # Mostrar tool calls en expanders ANTES de la respuesta final
-                if tool_calls:
-                    renderizar_tool_calls(tool_calls)
+        razonamiento, texto, error = "", "", None
+        tool_calls: list = []
+        pendientes: dict = {}   # id de tool_call -> (registro, espacio en pantalla)
+        razon_vista = None      # (st.status, espacio) se crea al llegar el primer razonamiento
 
-                # Mostrar la respuesta del DM
-                st.markdown(respuesta)
+        for ev in stream_agent(prompt, thread_id=st.session_state.thread_id):
+            tipo = ev["type"]
 
-                # Guardar en el historial
-                st.session_state.messages.append({
-                    "role": "assistant",
-                    "content": respuesta,
-                    "tool_calls": tool_calls
-                })
+            if tipo == "reasoning":
+                razonamiento += ev["text"]
+                if razon_vista is None:
+                    with razon_box:
+                        estado = st.status("🧠 Razonando...", expanded=True)
+                        razon_vista = (estado, estado.empty())
+                razon_vista[1].markdown(razonamiento)
 
-                # Verificar si se actualizó el mapa (herramienta switch_and_render_map)
-                _mapa_actualizado = any(
-                    "map" in tc.get("name", "").lower() or "render" in tc.get("name", "").lower()
-                    for tc in tool_calls
-                )
+            elif tipo == "tool_call":
+                # La tool aparece apenas el agente decide invocarla (resultado pendiente)
+                registro = {"name": ev["name"], "input": ev["args"], "output": ""}
+                tool_calls.append(registro)
+                # Separar el texto previo a la tool del que venga después
+                if texto and not texto.endswith("\n\n"):
+                    texto += "\n\n"
+                espacio = tools_box.empty()
+                pendientes[ev["id"]] = (registro, espacio)
+                with espacio.container():
+                    renderizar_tool_calls([registro])
 
-            except Exception as e:
-                # Mostrar error amigable
-                mensaje_error = (
-                    f"⚔️ **El Dungeon Master tropieza con un hechizo roto...**\n\n"
-                    f"Error técnico: `{str(e)}`\n\n"
-                    "Intenta de nuevo o reinicia la partida con '🔄 Nueva Partida'."
-                )
-                st.error(mensaje_error)
-                # Guardar el error en el historial para mantener contexto
-                st.session_state.messages.append({
-                    "role": "assistant",
-                    "content": f"*[Error del sistema: {str(e)}]*",
-                    "tool_calls": []
-                })
+            elif tipo == "tool_result":
+                if ev["id"] in pendientes:
+                    registro, espacio = pendientes[ev["id"]]
+                    registro["output"] = ev["output"]
+                    with espacio.container():
+                        renderizar_tool_calls([registro])
+
+            elif tipo == "text":
+                texto += ev["text"]
+                texto_box.markdown(texto + "▌")
+
+            elif tipo == "error":
+                error = ev["message"]
+
+        if razon_vista is not None:
+            razon_vista[0].update(label="🧠 Razonamiento del modelo", state="complete", expanded=False)
+        texto_box.markdown(texto)
+
+        # Exportar el mapa desde el chat si este turno lo actualizó (misma key que usará el historial)
+        if uso_mapa(tool_calls):
+            boton_descarga_mapa(f"dl_mapa_{len(st.session_state.messages)}")
+
+        if error:
+            st.error(
+                "⚔️ **El Dungeon Master tropieza con un hechizo roto...**\n\n"
+                f"Error técnico: `{error}`\n\n"
+                "Intenta de nuevo o reinicia la partida con '🔄 Nueva Partida'."
+            )
+
+        # Guardar en el historial (con razonamiento y tools para poder re-renderizar)
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": texto or (f"*[Error del sistema: {error}]*" if error else ""),
+            "tool_calls": tool_calls,
+            "reasoning": razonamiento,
+        })
 
     # 3. Refrescar la página para actualizar el sidebar (HP, mapa, etc.)
     st.rerun()
