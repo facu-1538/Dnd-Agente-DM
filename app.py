@@ -635,7 +635,7 @@ with st.sidebar:
         partidas = _sm.listar_partidas()
         st.caption(f"{len(partidas)} partida{'s' if len(partidas) != 1 else ''} guardada{'s' if len(partidas) != 1 else ''}")
         # Alto fijo con scroll propio: la lista puede crecer sin empujar el resto de la barra
-        with st.container(height=300, border=False):
+        with st.container(height=300, border=False, key="lista_partidas"):
             for p in partidas[:50]:
                 es_actual = p["id"] == st.session_state.partida_id
                 titulo = titulo_partida(p)

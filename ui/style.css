@@ -221,3 +221,27 @@
 [data-testid="stSidebar"] [data-testid="stTabPanel"] > [data-testid="stVerticalBlock"] { gap: .55rem; }
 /* La miniatura del mapa se recorta un poco (el mapa completo se ve al ampliar) para que la barra no necesite scroll */
 [class*="st-key-mapa_click"] img { height: 120px; width: 100%; object-fit: cover; object-position: center; }
+
+/* ---- Chat: los mensajes del jugador a la derecha, las respuestas del DM a la izquierda ---- */
+[data-testid="stChatMessage"]:has(.msg-ancla) {
+    flex-direction: row-reverse; width: fit-content; max-width: 80%; margin-left: auto;
+    padding: .6rem .9rem; border-radius: 18px 18px 4px 18px;
+    background: rgba(179, 38, 58, .16); border: 1px solid rgba(179, 38, 58, .35);
+}
+[data-testid="stChatMessage"]:has(.msg-ancla) p { text-align: left; }
+
+/* ---- Barra lateral: nunca debe mostrar scroll ---- */
+[data-testid="stSidebarContent"], [data-testid="stSidebar"] [data-testid="stSidebarUserContent"] { scrollbar-width: none; }
+[data-testid="stSidebarContent"]::-webkit-scrollbar { display: none; }
+[data-testid="stSidebarUserContent"] { padding-bottom: 0 !important; }
+/* Miniatura del mapa y lista de partidas se adaptan al alto de la pantalla */
+[class*="st-key-mapa_click"] img { height: clamp(64px, calc(100vh - 650px), 120px); }
+[class*="st-key-lista_partidas"] { height: clamp(110px, calc(100vh - 430px), 340px) !important; }
+@media (max-height: 700px) {
+    [data-testid="stSidebar"] [data-testid="stTabPanel"] > [data-testid="stVerticalBlock"] { gap: .3rem; }
+    .bloque { padding-top: .3rem; margin-top: 0; }
+    .ficha-nombre { font-size: 1.3rem; }
+    .ficha-chips { margin-top: .25rem; }
+    .val { font-size: .95rem; margin-top: 0; }
+    [data-testid="stSidebar"] [data-testid="stSidebarHeader"] { min-height: 48px; }
+}
