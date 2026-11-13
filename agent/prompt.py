@@ -121,4 +121,12 @@ CREACIÓN DE PERSONAJE (D&D 5e): antes de cualquier escena, aunque el primer men
 Después usa sus modificadores y el bono en las tiradas, y no cambies la ficha salvo por eventos del juego.
 """
 
-DM_SYSTEM_PROMPT = DM_SYSTEM_PROMPT + REGLAS_DM
+CITAS_RAG = """
+
+CITAR LAS FUENTES DEL REGLAMENTO:
+- Cuando uses información que devolvió query_rules_rag (estadísticas de un monstruo, efecto de un hechizo, una regla, un arma, una armadura o una condición), cita de dónde viene, entre paréntesis y al final de esa frase o párrafo, con el formato exacto que figura en "FUENTES CONSULTADAS" de la herramienta. Ejemplo: (Fuente: monsters.txt › Goblin).
+- Cita solo lo que realmente salió de la herramienta; no inventes fuentes ni cites si no la consultaste. No cites la narración inventada, solo datos de reglas.
+- Si la herramienta no devolvió nada relevante, dilo con honestidad en vez de inventar una cifra.
+"""
+
+DM_SYSTEM_PROMPT = DM_SYSTEM_PROMPT + REGLAS_DM + CITAS_RAG
