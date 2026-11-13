@@ -222,7 +222,7 @@ def execute_dice_roll(dice_formula: str, reason: str, target_dc_or_ac: int = 0) 
 # ---------------------------------------------------------------------------
 
 @tool
-def switch_and_render_map(revealed_nodes: list) -> str:
+def switch_and_render_map(revealed_nodes: list[str]) -> str:
     """
     Actualiza el mapa del dungeon revelando nuevas salas y renderiza la vista actual.
 
@@ -231,16 +231,22 @@ def switch_and_render_map(revealed_nodes: list) -> str:
     - El jugador explora una zona previamente desconocida
     - Un evento narrativo revela partes del mapa
 
+    IDs de sala VÁLIDOS (cualquier otro se rechaza): sala_entrada, sala_biblioteca,
+    sala_armeria, sala_guardia, sala_archivo, sala_tesoro, sala_mazmorra, sala_jefe.
+    Conexiones: entrada -> biblioteca/armeria/guardia; biblioteca -> archivo;
+    armeria -> tesoro -> jefe; guardia -> mazmorra. (Fuente: DUNGEON_LAYOUT en
+    game_engine/map_renderer.py; si cambia el layout, actualizar esta lista.)
+
     Args:
-        revealed_nodes: Lista de IDs de salas/nodos a revelar en el mapa.
-                       Ejemplo: ["sala_entrada", "corredor_norte", "sala_jefe"]
+        revealed_nodes: Lista de IDs de salas a revelar.
+                       Ejemplo: ["sala_entrada", "sala_armeria"]
 
     Returns:
         String con el resultado de la actualización del mapa
     """
     try:
         from game_engine.state_manager import get_state_manager
-        from game_engine.map_renderer import get_map_renderer
+        from game_engine.map_renderer import get_map_renderer, DUNGEON_LAYOUT
     except ImportError as e:
         return (
             f"⚠️ No se pudo cargar el motor de juego: {e}. "
@@ -259,10 +265,15 @@ def switch_and_render_map(revealed_nodes: list) -> str:
         # Actualizar las salas reveladas en el estado del juego
         newly_revealed = []
         already_revealed = []
+        invalid_nodes = []
 
         for node_id in revealed_nodes:
             if isinstance(node_id, str) and node_id.strip():
                 nodo_limpio = node_id.strip()
+                # Rechazar IDs inventados: solo existen las salas de DUNGEON_LAYOUT
+                if nodo_limpio not in DUNGEON_LAYOUT:
+                    invalid_nodes.append(nodo_limpio)
+                    continue
                 salas_previas = state_manager.get_discovered_rooms()
                 state_manager.discover_room(nodo_limpio)
                 # Si la sala no estaba antes, es nueva
@@ -284,6 +295,11 @@ def switch_and_render_map(revealed_nodes: list) -> str:
             result_parts.append(f"🗺️ **Nuevas áreas reveladas**: {', '.join(newly_revealed)}")
         if already_revealed:
             result_parts.append(f"ℹ️ Ya exploradas: {', '.join(already_revealed)}")
+        if invalid_nodes:
+            result_parts.append(
+                f"⚠️ IDs inexistentes (ignorados): {', '.join(invalid_nodes)}. "
+                f"IDs válidos: {', '.join(DUNGEON_LAYOUT)}."
+            )
 
         if render_success:
             result_parts.append("✅ Mapa actualizado y renderizado correctamente.")
