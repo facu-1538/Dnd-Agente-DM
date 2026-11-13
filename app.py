@@ -31,6 +31,19 @@ st.set_page_config(
 # ---------------------------------------------------------------------------
 st.markdown("""
 <style>
+
+    @import url('https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@400;600&display=swap');
+
+    [data-testid="stChatMessage"] [data-testid="stMarkdownContainer"],
+    [data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] p,
+    [data-testid="stChatMessage"] [data-testid="stMarkdownContainer"] li,
+    div[data-testid="stChatInput"] textarea {
+        font-family: 'Pixelify Sans', 'Courier New', monospace !important;
+        font-size: 1.2rem;
+        letter-spacing: 0.3px;
+        line-height: 1.5;
+        color: #ffe066 !important;
+    }
     /* ---- Fondo general ---- */
     .stApp {
         background-color: #1a1a2e;
