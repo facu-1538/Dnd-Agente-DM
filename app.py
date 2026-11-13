@@ -313,17 +313,26 @@ def uso_mapa(tool_calls: list) -> bool:
     return any(tc.get("name") == "switch_and_render_map" for tc in tool_calls)
 
 
-def boton_descarga_mapa(key: str):
+def boton_descarga_mapa(key: str, etiqueta: str = "Descargar mapa", ancho: str = "content"):
     """Botón para exportar el mapa actual (PNG). `key` debe ser único en la página."""
     if MAPA_PATH.exists():
         st.download_button(
-            "Descargar mapa",
+            etiqueta,
             data=MAPA_PATH.read_bytes(),
             file_name="mapa_dungeon.png",
             mime="image/png",
             icon=":material/download:",
+            width=ancho,
             key=key,
         )
+
+
+@st.dialog("Mapa de la mazmorra", width="large")
+def ver_mapa_grande():
+    """El mapa a tamaño completo: en la barra lateral mide ~300 px y los nombres no se leen."""
+    if MAPA_PATH.exists():
+        st.image(str(MAPA_PATH), width="stretch", alt="Mapa ilustrado de la mazmorra con las salas exploradas")
+        boton_descarga_mapa("descargar_mapa_dialogo")
 
 
 def nueva_partida():
@@ -408,7 +417,12 @@ with st.sidebar:
     st.markdown("#### :green[:material/map:] Mapa")
     if MAPA_PATH.exists():
         st.image(str(MAPA_PATH), width="stretch", alt="Mapa del dungeon con las salas exploradas")
-        boton_descarga_mapa("descargar_mapa")
+        col_ampliar, col_descargar = st.columns(2)
+        with col_ampliar:
+            if st.button("Ampliar", icon=":material/zoom_in:", key="ampliar_mapa", width="stretch"):
+                ver_mapa_grande()
+        with col_descargar:
+            boton_descarga_mapa("descargar_mapa", etiqueta="Descargar", ancho="stretch")
     else:
         with st.container(border=True):
             st.caption("El mapa se revelará al explorar el dungeon.")
