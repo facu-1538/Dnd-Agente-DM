@@ -35,6 +35,8 @@ from agent.tools import (
     switch_and_render_map,
     damage_player,
     heal_player,
+    set_character,
+    manage_enemy,
 )
 from agent.prompt import DM_SYSTEM_PROMPT
 
@@ -52,7 +54,10 @@ INCLUDE_THOUGHTS = os.getenv("DM_INCLUDE_THOUGHTS", "1") != "0"
 # Tope de pasos del grafo (cada tool call consume ~2). Evita bucles infinitos.
 RECURSION_LIMIT = 25
 
-_TOOLS = [query_rules_rag, execute_dice_roll, switch_and_render_map, damage_player, heal_player]
+_TOOLS = [
+    query_rules_rag, execute_dice_roll, switch_and_render_map,
+    damage_player, heal_player, set_character, manage_enemy,
+]
 
 # Checkpointer y agente: singletons de módulo (ver docstring)
 _checkpointer = InMemorySaver()
@@ -115,13 +120,37 @@ def get_agent():
 # ---------------------------------------------------------------------------
 
 def _estado_jugador() -> str:
-    """Línea con el HP real del jugador para que el modelo no lo invente."""
+    """
+    Línea con el estado real de la partida (personaje, vida, ubicación, enemigos vivos).
+
+    Se antepone al mensaje del jugador en CADA turno: así el modelo nunca trabaja con
+    datos viejos ni inventados, y no hace falta una tool ni una ronda extra para consultarlos.
+    """
     try:
         from game_engine.state_manager import get_state_manager
-        j = get_state_manager().get_state().get("jugador", {})
-        hp = j.get("hp", "?")
-        hp_max = j.get("hp_max", j.get("hp_maximo", j.get("max_hp", 100)))
-        return f"[ESTADO ACTUAL DEL JUGADOR: HP {hp}/{hp_max}]\n"
+        estado = get_state_manager().get_state()
+        j = estado["jugador"]
+
+        if j.get("ficha_creada"):
+            ficha = f"{j['nombre']}, {j['raza']} {j['clase']} (nivel {j['nivel']})"
+        else:
+            ficha = "personaje SIN crear todavía"
+
+        try:
+            from game_engine.map_renderer import DUNGEON_LAYOUT
+            sala = estado["sala_actual"]
+            ubicacion = f"{DUNGEON_LAYOUT[sala]['nombre']} ({sala})"
+        except Exception:
+            ubicacion = estado.get("sala_actual", "?")
+
+        enemigos = ", ".join(
+            f"{d['nombre']} {d['hp']}/{d['max_hp']} HP" for d in estado["npcs"].values()
+        ) or "ninguno"
+
+        return (
+            f"[ESTADO: {ficha} | HP {j['hp']}/{j['max_hp']} | oro {j['oro']}, XP {j['experiencia']} | "
+            f"ubicación: {ubicacion} | enemigos: {enemigos}]\n"
+        )
     except Exception:
         return ""
 

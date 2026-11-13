@@ -9,9 +9,23 @@ import re
 import json
 import sys
 import os
+from typing import Literal
 
 # Asegurar que el directorio raíz del proyecto esté en el path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+def _log(tipo: str, texto: str) -> None:
+    """Registra un evento en la partida. Nunca rompe la tool si el registro falla."""
+    try:
+        from game_engine.state_manager import get_state_manager
+        get_state_manager().log_event(tipo, texto)
+    except Exception:
+        pass
+
+
+def _json(datos: dict) -> str:
+    return json.dumps(datos, ensure_ascii=False)
 
 
 # ---------------------------------------------------------------------------
@@ -58,9 +72,14 @@ def query_rules_rag(query: str, category: str = "general") -> str:
 
     # Buscar por categoría si se especifica, o búsqueda general
     if category and category != "general":
-        return retriever.search_by_category(query, category, k=4)
+        resultado = retriever.search_by_category(query, category, k=4)
     else:
-        return retriever.search(query, k=4)
+        resultado = retriever.search(query, k=4)
+
+    # Registro de la partida: qué se consultó y de qué documentos salió
+    fuentes = re.search(r"^FUENTES CONSULTADAS: (.+)$", resultado, flags=re.M)
+    _log("reglas", f"Consulta al reglamento: «{query}»" + (f" → {fuentes.group(1)}" if fuentes else ""))
+    return resultado
 
 
 # ---------------------------------------------------------------------------
@@ -198,6 +217,8 @@ def execute_dice_roll(dice_formula: str, reason: str, target_dc_or_ac: int = 0) 
             ),
         }
 
+        veredicto = "" if success is None else (" (éxito)" if success else " (fallo)")
+        _log("dados", f"{reason}: {dice_formula} → {result['total']}{veredicto}")
         return json.dumps(output, ensure_ascii=False)
 
     except ValueError as e:
@@ -222,121 +243,83 @@ def execute_dice_roll(dice_formula: str, reason: str, target_dc_or_ac: int = 0) 
 
 
 # ---------------------------------------------------------------------------
-# TOOL 3: Cambio y renderizado del mapa del dungeon
+# TOOL 3: Movimiento por el dungeon y mapa
 # ---------------------------------------------------------------------------
 
 @tool
-def switch_and_render_map(revealed_nodes: list[str]) -> str:
+def switch_and_render_map(revealed_nodes: list[str], current_room: str = "") -> str:
     """
-    Actualiza el mapa del dungeon revelando nuevas salas y renderiza la vista actual.
+    Mueve al jugador por el dungeon: revela salas, fija su ubicación y redibuja el mapa.
+    Úsala cuando el jugador entra a una sala o descubre una zona nueva.
 
-    Usa esta herramienta cuando:
-    - El jugador se mueve a una nueva sala o área
-    - El jugador explora una zona previamente desconocida
-    - Un evento narrativo revela partes del mapa
-
-    IDs de sala VÁLIDOS (cualquier otro se rechaza): sala_entrada, sala_biblioteca,
-    sala_armeria, sala_guardia, sala_archivo, sala_tesoro, sala_mazmorra, sala_jefe.
-    Conexiones: entrada -> biblioteca/armeria/guardia; biblioteca -> archivo;
-    armeria -> tesoro -> jefe; guardia -> mazmorra. (Fuente: DUNGEON_LAYOUT en
-    game_engine/map_renderer.py; si cambia el layout, actualizar esta lista.)
+    Salas válidas (cualquier otro ID se rechaza): sala_entrada, sala_biblioteca, sala_armeria,
+    sala_guardia, sala_archivo, sala_tesoro, sala_mazmorra, sala_jefe.
+    Conexiones: entrada -> biblioteca / armeria / guardia; biblioteca -> archivo;
+    armeria -> tesoro -> jefe; guardia -> mazmorra.
 
     Args:
-        revealed_nodes: Lista de IDs de salas a revelar.
-                       Ejemplo: ["sala_entrada", "sala_armeria"]
+        revealed_nodes: IDs de las salas a revelar. Ejemplo: ["sala_armeria"]
+        current_room: ID de la sala donde queda el jugador. Si se omite, es la última
+                      sala de revealed_nodes.
 
     Returns:
-        String con el resultado de la actualización del mapa
+        Salas nuevas, ubicación actual y estado del mapa.
     """
     try:
         from game_engine.state_manager import get_state_manager
         from game_engine.map_renderer import get_map_renderer, DUNGEON_LAYOUT
     except ImportError as e:
-        return (
-            f"⚠️ No se pudo cargar el motor de juego: {e}. "
-            "Verifica que el módulo game_engine/ esté disponible."
-        )
+        return f"⚠️ No se pudo cargar el motor de juego: {e}."
 
     try:
-        # Obtener instancias singleton del state manager y el renderer
-        state_manager = get_state_manager()
-        map_renderer = get_map_renderer()
+        sm = get_state_manager()
+        validos, invalidos = [], []
+        for nodo in revealed_nodes or []:
+            nodo = nodo.strip() if isinstance(nodo, str) else ""
+            if nodo in DUNGEON_LAYOUT:
+                validos.append(nodo)
+            elif nodo:
+                invalidos.append(nodo)
 
-        # Validar que se proporcionaron nodos
-        if not revealed_nodes:
-            return "⚠️ No se proporcionaron nodos para revelar en el mapa."
+        # Sala donde queda el jugador: la indicada, o la última revelada
+        destino = (current_room or "").strip()
+        if destino and destino not in DUNGEON_LAYOUT:
+            invalidos.append(destino)
+            destino = ""
+        destino = destino or (validos[-1] if validos else "")
 
-        # Actualizar las salas reveladas en el estado del juego
-        newly_revealed = []
-        already_revealed = []
-        invalid_nodes = []
+        if not destino:
+            return f"⚠️ No se indicó ninguna sala válida. IDs válidos: {', '.join(DUNGEON_LAYOUT)}."
 
-        for node_id in revealed_nodes:
-            if isinstance(node_id, str) and node_id.strip():
-                nodo_limpio = node_id.strip()
-                # Rechazar IDs inventados: solo existen las salas de DUNGEON_LAYOUT
-                if nodo_limpio not in DUNGEON_LAYOUT:
-                    invalid_nodes.append(nodo_limpio)
-                    continue
-                salas_previas = state_manager.get_discovered_rooms()
-                state_manager.discover_room(nodo_limpio)
-                # Si la sala no estaba antes, es nueva
-                if nodo_limpio not in salas_previas:
-                    newly_revealed.append(nodo_limpio)
-                else:
-                    already_revealed.append(nodo_limpio)
+        previas = sm.get_discovered_rooms()
+        nuevas = [n for n in validos if n not in previas]
+        ya_vistas = [n for n in validos if n in previas]
+        for nodo in validos:
+            sm.discover_room(nodo)
+        sm.move_to_room(destino, DUNGEON_LAYOUT[destino]["nombre"])
 
-        # Renderizar el mapa con niebla de guerra actualizada
-        mapa_path = map_renderer.render_fog_of_war(
-            discovered_rooms=state_manager.get_discovered_rooms()
-        )
-        render_success = bool(mapa_path)
+        mapa_ok = bool(get_map_renderer().render_fog_of_war(discovered_rooms=sm.get_discovered_rooms()))
 
-        # Construir mensaje de resultado
-        result_parts = []
-
-        if newly_revealed:
-            result_parts.append(f"🗺️ **Nuevas áreas reveladas**: {', '.join(newly_revealed)}")
-        if already_revealed:
-            result_parts.append(f"ℹ️ Ya exploradas: {', '.join(already_revealed)}")
-        if invalid_nodes:
-            result_parts.append(
-                f"⚠️ IDs inexistentes (ignorados): {', '.join(invalid_nodes)}. "
-                f"IDs válidos: {', '.join(DUNGEON_LAYOUT)}."
-            )
-
-        if render_success:
-            result_parts.append("✅ Mapa actualizado y renderizado correctamente.")
-            result_parts.append("El mapa ahora muestra las nuevas áreas en el panel lateral.")
-        else:
-            result_parts.append(
-                "⚠️ El mapa fue actualizado en el estado del juego pero no se pudo renderizar la imagen. "
-                "Verifica que el renderer esté configurado correctamente."
-            )
-
-        return "\n".join(result_parts)
+        lineas = []
+        if nuevas:
+            lineas.append(f"Salas nuevas: {', '.join(nuevas)}")
+        if ya_vistas:
+            lineas.append(f"Ya exploradas: {', '.join(ya_vistas)}")
+        lineas.append(f"Ubicación actual: {DUNGEON_LAYOUT[destino]['nombre']} ({destino})")
+        if invalidos:
+            lineas.append(f"⚠️ IDs inexistentes (ignorados): {', '.join(invalidos)}. "
+                          f"Válidos: {', '.join(DUNGEON_LAYOUT)}.")
+        lineas.append("Mapa actualizado." if mapa_ok else
+                      "⚠️ El estado se actualizó pero no se pudo dibujar la imagen del mapa.")
+        return "\n".join(lineas)
 
     except Exception as e:
-        return (
-            f"❌ Error al actualizar el mapa: {e}. "
-            "El juego puede continuar normalmente; el mapa se actualizará en el próximo movimiento."
-        )
-
-
+        return f"❌ Error al actualizar el mapa: {e}. El juego puede continuar."
 
 
 # ---------------------------------------------------------------------------
 # TOOLS 4 y 5: Vida del jugador (daño y curación sobre el estado real)
 # ---------------------------------------------------------------------------
-
-def _hp_actual() -> tuple:
-    """Devuelve (hp, hp_max) leyendo el estado real del juego."""
-    from game_engine.state_manager import get_state_manager
-    jugador = get_state_manager().get_state().get("jugador", {})
-    hp = int(jugador.get("hp", 0))
-    hp_max = int(jugador.get("hp_max", jugador.get("hp_maximo", jugador.get("max_hp", hp))))
-    return hp, hp_max
-
 
 @tool
 def damage_player(amount: int, source: str = "desconocido") -> str:
@@ -356,21 +339,11 @@ def damage_player(amount: int, source: str = "desconocido") -> str:
     """
     try:
         from game_engine.state_manager import get_state_manager
-        sm = get_state_manager()
-        amount = max(0, int(amount))
-        hp_antes, hp_max = _hp_actual()
-        sm.damage_player(amount)
-        hp_despues, _ = _hp_actual()
-        return json.dumps({
-            "hp_anterior": hp_antes,
-            "danio": amount,
-            "fuente": source,
-            "nuevo_hp": hp_despues,
-            "hp_max": hp_max,
-            "inconsciente": hp_despues <= 0,
-        }, ensure_ascii=False)
+        r = get_state_manager().damage_player(max(0, int(amount)), source)
+        return _json({"hp_anterior": r["hp_anterior"], "danio": r["dano_recibido"], "fuente": source,
+                      "nuevo_hp": r["nuevo_hp"], "hp_max": r["max_hp"], "inconsciente": r["muerto"]})
     except Exception as e:
-        return json.dumps({"error": f"No se pudo aplicar el daño: {e}"}, ensure_ascii=False)
+        return _json({"error": f"No se pudo aplicar el daño: {e}"})
 
 
 @tool
@@ -390,17 +363,104 @@ def heal_player(amount: int, source: str = "desconocido") -> str:
     """
     try:
         from game_engine.state_manager import get_state_manager
-        sm = get_state_manager()
-        amount = max(0, int(amount))
-        hp_antes, hp_max = _hp_actual()
-        sm.heal_player(amount)
-        hp_despues, _ = _hp_actual()
-        return json.dumps({
-            "hp_anterior": hp_antes,
-            "curacion": amount,
-            "fuente": source,
-            "nuevo_hp": hp_despues,
-            "hp_max": hp_max,
-        }, ensure_ascii=False)
+        r = get_state_manager().heal_player(max(0, int(amount)), source)
+        return _json({"hp_anterior": r["hp_anterior"], "curacion": r["curado"], "fuente": source,
+                      "nuevo_hp": r["nuevo_hp"], "hp_max": r["max_hp"]})
     except Exception as e:
-        return json.dumps({"error": f"No se pudo aplicar la curación: {e}"}, ensure_ascii=False)
+        return _json({"error": f"No se pudo aplicar la curación: {e}"})
+
+
+# ---------------------------------------------------------------------------
+# TOOL 6: Ficha del personaje
+# ---------------------------------------------------------------------------
+
+@tool
+def set_character(name: str, race: str, char_class: str, level: int = 1) -> str:
+    """
+    Guarda la ficha del personaje cuando el jugador termina de crearlo.
+    Llámala UNA sola vez, al tener nombre, raza y clase. El panel lateral y el informe
+    final de la aventura usan estos datos.
+
+    Args:
+        name: Nombre del personaje
+        race: Raza (ej: "elfo", "enano")
+        char_class: Clase (ej: "mago", "guerrero")
+        level: Nivel inicial (1 por defecto)
+
+    Returns:
+        JSON con la ficha guardada
+    """
+    try:
+        from game_engine.state_manager import get_state_manager
+        j = get_state_manager().set_character(name, race, char_class, level)
+        return _json({"nombre": j["nombre"], "raza": j["raza"], "clase": j["clase"], "nivel": j["nivel"]})
+    except Exception as e:
+        return _json({"error": f"No se pudo guardar la ficha: {e}"})
+
+
+# ---------------------------------------------------------------------------
+# TOOL 7: Enemigos en combate
+# ---------------------------------------------------------------------------
+
+@tool
+def manage_enemy(
+    action: Literal["spawn", "damage", "remove"],
+    name: str,
+    hp: int = 0,
+    amount: int = 0,
+    xp: int = 0,
+    gold: int = 0,
+) -> str:
+    """
+    Lleva el estado de los enemigos del combate (se ven en el panel lateral).
+
+    - spawn: un enemigo entra en combate. Indica name, hp (de query_rules_rag) y la
+      recompensa: xp (SRD por CR: 1/4=50, 1/2=100, 1=200, 2=450, 3=700) y gold.
+    - damage: el jugador hiere al enemigo name con amount (daño final ya tirado). Si su
+      HP llega a 0 queda derrotado y el jugador recibe su oro y XP automáticamente.
+    - remove: el enemigo huye o se rinde, sale del combate sin recompensa.
+
+    Si hay varios del mismo tipo se numeran (Goblin, Goblin 2): usa el nombre exacto
+    que devolvió spawn.
+
+    Args:
+        action: spawn, damage o remove
+        name: Nombre del enemigo
+        hp: Puntos de vida iniciales (solo spawn)
+        amount: Daño final (solo damage)
+        xp: XP que otorga al ser derrotado (solo spawn)
+        gold: Oro que suelta al ser derrotado (solo spawn)
+
+    Returns:
+        JSON con el estado del enemigo; al derrotarlo incluye la recompensa y si el
+        jugador subió de nivel.
+    """
+    try:
+        from game_engine.state_manager import get_state_manager
+        sm = get_state_manager()
+
+        if action == "spawn":
+            if hp <= 0:
+                return _json({"error": "Para spawn hay que indicar hp > 0 (consúltalo en query_rules_rag)."})
+            e = sm.spawn_enemy(name, hp, xp, gold)
+            return _json({"accion": "spawn", "nombre": e["nombre"], "hp": e["hp"],
+                          "recompensa_xp": e["xp"], "recompensa_oro": e["oro"]})
+
+        npc_id = sm.find_npc(name)
+        if npc_id is None:
+            activos = [d["nombre"] for d in sm.get_active_npcs().values()]
+            return _json({"error": f"No hay un enemigo llamado '{name}'.", "enemigos_activos": activos})
+
+        if action == "damage":
+            r = sm.damage_npc(npc_id, max(0, int(amount)))
+            return _json({"accion": "damage", **r})
+
+        if action == "remove":
+            nombre = sm.get_active_npcs()[npc_id]["nombre"]
+            sm.remove_npc(npc_id)
+            sm.log_event("enemigo", f"{nombre} abandona el combate")
+            return _json({"accion": "remove", "nombre": nombre})
+
+        return _json({"error": f"Acción desconocida: {action}"})
+    except Exception as e:
+        return _json({"error": f"No se pudo gestionar el enemigo: {e}"})
