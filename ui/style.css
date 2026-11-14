@@ -256,3 +256,10 @@
     .val { font-size: .95rem; margin-top: 0; }
     [data-testid="stSidebar"] [data-testid="stSidebarHeader"] { min-height: 48px; }
 }
+
+/* ---- Caja de mensaje: con varias líneas, el botón de enviar queda a la derecha, abajo, sin abrir un hueco ----
+   Streamlit pasa la caja a dos filas (texto arriba, botón abajo) apenas el texto ocupa más de una línea. */
+[data-testid="stChatInput"] > div > div { flex-direction: row !important; align-items: flex-end !important; gap: 8px; }
+[data-testid="stChatInput"] > div > div > div:first-child { flex: 1 1 auto; min-width: 0; }
+[data-testid="stChatInput"] > div > div > div:last-child { flex: none; width: auto !important; }
+[data-testid="stChatInput"] > div > div > div:last-child > div:first-child:empty { display: none; }
