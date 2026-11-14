@@ -180,7 +180,7 @@ Se abre en <http://localhost:8501>. El índice vectorial ya viene en el reposito
 | **Memoria** | Después de una tirada preguntá `¿Cuánto salió en esa tirada?`: responde sin que se lo repitas. La memoria es persistente: recargá la página (F5) o reiniciá Streamlit y el agente sigue acordándose. |
 | **Partidas guardadas** | Jugá un par de turnos y recargá la página: vuelve la misma partida con todo el chat. **Nueva partida** crea otra; la pestaña **Historial** abre o borra las guardadas, y al abrir una se pasa a **Partida** para ver sus stats. |
 | **Navegación del chat** | En el borde derecho aparece un riel con un punto por cada mensaje tuyo: al pasar el mouse muestra su mini título y al hacer clic salta a esa parte de la conversación. |
-| **RAG y citas** | Preguntá `¿Qué hace el hechizo Bola de Fuego?`: aparece la consulta de reglas con sus **fuentes consultadas** (al abrir el paso), y la respuesta cita el documento, por ejemplo `(Fuente: spells.txt › Fireball)`. |
+| **RAG y citas** | Preguntá `¿Qué hace el hechizo Bola de Fuego?`: aparece la consulta de reglas (al abrir el paso se ve qué se buscó y qué fragmentos volvieron) y, debajo de la respuesta, el desplegable **Fuentes consultadas** con el documento de origen de cada dato, por ejemplo `spells.txt › Fireball`. |
 | **Producto tangible** | Escribí `Terminemos: genera la crónica de la aventura`. El agente llama a `generate_adventure_report` y aparece el botón **Descargar crónica (PDF)**. El mapa también se puede descargar desde el chat. Tocando el mapa de la barra lateral se abre en grande, centrado y sin scroll, con **zoom de rueda**, arrastre, doble clic y un botón de descarga. |
 
 ## RAG: corpus e ingesta (reproducible)
@@ -202,7 +202,7 @@ Se abre en <http://localhost:8501>. El índice vectorial ya viene en el reposito
 
 **Tamaño del contexto:** la tool devuelve como máximo 4 fragmentos de ≤2000 caracteres (~8000 caracteres), para no saturar el contexto del agente.
 
-**Citas de las fuentes:** cada fragmento que recibe el agente lleva un encabezado con su documento de origen (`[Fuente 1: monsters.txt › Goblin]`) y la tool cierra con la línea `FUENTES CONSULTADAS`. El prompt del DM (`CITAS_RAG` en `agent/prompt.py`) le exige citar entre paréntesis, con ese mismo formato, todo dato de reglas que use, y no citar nada que no haya salido de la herramienta. La UI muestra la lista de fuentes al abrir el paso de la consulta. Como la búsqueda devuelve hasta 4 fragmentos, algunos pueden no ser relevantes: el modelo cita solo los que usa. Verificado con Gemini real tanto en una pregunta de reglas como en un turno de combate.
+**Citas de las fuentes:** cada fragmento que recibe el agente lleva un encabezado con su documento de origen (`[Fuente 1: monsters.txt › Goblin]`) y la tool cierra con la línea `FUENTES CONSULTADAS`. La interfaz toma esas fuentes de lo que devolvió la tool (no de lo que escribe el modelo) y las muestra bajo cada respuesta en un desplegable cerrado, **Fuentes consultadas (N)**, sin repetir. Así la narración no se interrumpe con paréntesis y la cita no depende de que el modelo respete un formato: el prompt (`CITAS_RAG` en `agent/prompt.py`) le pide, de hecho, no escribir fuentes en el texto. Como la búsqueda devuelve hasta 4 fragmentos, el desplegable lista los documentos recuperados, aunque el modelo use solo algunos.
 
 **Reconstruir desde cero:**
 

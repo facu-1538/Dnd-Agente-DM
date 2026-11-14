@@ -511,6 +511,29 @@ def renderizar_razonamiento(texto: str, key: str, abierto: bool):
             st.markdown(texto)
 
 
+def fuentes_de(tool_calls: list) -> list:
+    """Documentos de origen ("archivo.txt › Título") de todas las consultas al RAG del turno, sin repetir."""
+    vistas: list = []
+    for tc in tool_calls:
+        if tc.get("name") != "query_rules_rag":
+            continue
+        m = re.search(r"^FUENTES CONSULTADAS: (.+)$", tc.get("output", ""), flags=re.M)
+        for fuente in (m.group(1).split(";") if m else []):
+            fuente = fuente.strip()
+            if fuente and fuente not in vistas:
+                vistas.append(fuente)
+    return vistas
+
+
+def mostrar_fuentes(fuentes: list, abierto: bool):
+    """Desplegable "Fuentes consultadas" bajo la respuesta (cerrado por defecto, como los pasos)."""
+    if not fuentes:
+        return
+    with st.expander(f":blue[:material/menu_book:] Fuentes consultadas ({len(fuentes)})", expanded=abierto, type="compact"):
+        for fuente in fuentes:
+            st.markdown(f"- :blue[:material/description:] `{fuente}`")
+
+
 def pdf_generado(tool_calls: list):
     """Ruta del PDF si en estas tool calls el agente generó la crónica (y el archivo existe)."""
     for tc in tool_calls:
@@ -700,11 +723,22 @@ with st.sidebar:
     tab_partida, tab_historial = st.tabs([TAB_PARTIDA, TAB_HISTORIAL])
     if st.session_state.pop("ir_a_partida", False):
         # Streamlit no permite elegir la pestaña desde Python sin recargar la app (y recargar cortaría un turno
-        # en curso): un script fijo hace el clic en la primera pestaña, una sola vez.
-        st.html("""<script>setTimeout(() => {
-            const t = document.querySelector('[data-testid="stSidebar"] [role="tab"]');
-            if (t) t.click();
-        }, 60);</script>""", unsafe_allow_javascript=True)
+        # en curso): un script hace el clic en la primera pestaña y baja el chat hasta el último mensaje.
+        # Reintenta unos instantes porque la página termina de dibujarse después de ejecutarse el script, y lleva
+        # un valor distinto en cada uso: si el HTML fuera idéntico al anterior, el navegador no lo volvería a ejecutar.
+        st.html(f"""<script>/* {time.time_ns()} */
+        (function () {{
+            let intentos = 0;
+            const reloj = setInterval(() => {{
+                intentos++;
+                const pestana = document.querySelector('[data-testid="stSidebar"] [role="tab"]');
+                if (pestana && pestana.getAttribute("aria-selected") !== "true") pestana.click();
+                const chat = document.querySelector('[data-testid="stAppScrollToBottomContainer"]');
+                if (chat) chat.scrollTo({{ top: chat.scrollHeight }});
+                if (intentos >= 12) clearInterval(reloj);
+            }}, 150);
+        }})();
+        </script>""", unsafe_allow_javascript=True)
 
     # --- Pestaña "Partida": ficha, vida, ubicación, enemigos y mapa (compacto, sin scroll) ---
     with tab_partida:
@@ -950,6 +984,7 @@ for idx, mensaje in enumerate(st.session_state.messages):
                 mostrar_dado(tool_calls, n, plan)
             with st.container(key=f"narr_{idx}"):
                 st.markdown(texto_de(mensaje["content"]))
+            mostrar_fuentes(fuentes_de(tool_calls), pasos_abiertos)
             if uso_mapa(tool_calls):
                 boton_descarga_mapa(f"dl_mapa_{idx}")
             if (pdf := pdf_generado(tool_calls)):
@@ -1050,6 +1085,7 @@ if prompt := st.chat_input("¿Qué hace tu personaje?", submit_mode="disable"):
         for _, estado_paso in pasos.values():      # al terminar la respuesta, los pasos se cierran
             estado_paso.update(expanded=pasos_abiertos)
         texto_box.markdown(texto)
+        mostrar_fuentes(fuentes_de(tool_calls), pasos_abiertos)
         if not error:
             st.caption(resumen_turno(len(tool_calls), seg_turno))
 
