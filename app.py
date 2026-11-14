@@ -314,7 +314,36 @@ def mostrar_resultado(registro: dict):
 def _datos_dado(registro: dict) -> dict | None:
     """Resultado de una tirada ya terminada (o None si el registro no es una tirada válida)."""
     datos = _json(registro.get("output", "")) if registro.get("name") == "execute_dice_roll" else None
-    return datos if datos and "total" in datos else None
+    if not datos or "total" not in datos:
+        return None
+    if not datos.get("roller") and registro.get("_roller"):       # inferido por plan_dados() cuando el modelo no lo indicó
+        datos["roller"] = registro["_roller"]
+    return datos
+
+
+def _inferir_rollers(tool_calls: list):
+    """
+    Si el modelo no indicó quién tira, se deduce de la razón de la tirada: si nombra al personaje es del jugador;
+    si nombra a un enemigo que entró en este turno (manage_enemy), es de ese enemigo. No toca lo que el modelo indicó.
+    """
+    try:
+        pj = str(_sm.get_player_info().get("nombre", "")).strip().lower()
+    except Exception:
+        pj = ""
+    enemigos = {str(tc.get("input", {}).get("name", "")).strip(): None for tc in tool_calls
+                if tc.get("name") == "manage_enemy" and tc.get("input", {}).get("name")}
+    for tc in tool_calls:
+        datos = _json(tc.get("output", "")) if tc.get("name") == "execute_dice_roll" else None
+        if not datos or datos.get("roller") or tc.get("_roller"):
+            continue
+        razon = str(datos.get("reason", "")).lower()
+        if len(pj) >= 3 and pj in razon:
+            tc["_roller"] = "jugador"
+        else:
+            for nombre in enemigos:
+                if nombre and nombre.lower() in razon:
+                    tc["_roller"] = nombre
+                    break
 
 
 def _es_jugador(roller) -> bool:
@@ -348,7 +377,7 @@ def _cuenta(datos: dict) -> str:
 def _especial(datos: dict) -> str:
     """Natural 20 o natural 1 (solo una tirada de un único d20)."""
     tiradas = datos.get("rolls") or []
-    if len(tiradas) == 1 and "d20" in str(datos.get("formula", "")).lower():
+    if datos.get("target") is not None and len(tiradas) == 1 and "d20" in str(datos.get("formula", "")).lower():
         return {20: "¡CRÍTICO!", 1: "¡PIFIA!"}.get(tiradas[0], "")
     return ""
 
@@ -357,28 +386,35 @@ _DADO = '<i class="dd-ic" aria-hidden="true">casino</i>'
 
 
 def html_dado(registro: dict) -> str:
-    """Tirada suelta, en una sola fila compacta: dado que gira, número, qué se tiró y el veredicto."""
+    """
+    Tirada suelta en una fila compacta, alineada como el chat: las del jugador a la derecha, las del enemigo
+    (o sin dueño) a la izquierda. Color según lo que significa para el jugador.
+    """
     datos = _datos_dado(registro)
     if not datos:
         return ""
+    mia = _es_jugador(datos.get("roller"))
     bueno = _bueno_para_vos(datos)
-    clase = "dd-neutro" if bueno is None and datos.get("success") is None else (
-        "dd-bien" if (bueno if bueno is not None else datos.get("success")) else "dd-mal")
     exito = datos.get("success")
     if exito is None:
+        clase = "dd-neutro"
+    else:
+        clase = "dd-bien" if (bueno if bueno is not None else exito) else "dd-mal"
+    if exito is None:
         etiqueta = ""
-    elif datos.get("roller") and not _es_jugador(datos["roller"]):
+    elif datos.get("roller") and not mia:
         etiqueta = "ACIERTA" if exito else "FALLA"
     else:
         etiqueta = "ÉXITO" if exito else "FALLO"
-    especial = _especial(datos)
-    quien = f'{html.escape(str(datos["roller"]))} · ' if datos.get("roller") else ""
+    chip = " · ".join(x for x in (etiqueta, _especial(datos)) if x)
+    quien = "Vos" if mia else (str(datos["roller"]).strip().capitalize() if datos.get("roller") else "")
+    prefijo = f"{html.escape(quien)} · " if quien else ""
     contra = f" · contra {html.escape(str(datos['target']))}" if datos.get("target") is not None else ""
     razon = html.escape(str(datos.get("reason") or "Tirada de dados"))
-    chip = f'<span class="dd-res">{etiqueta}{(" · " + especial) if especial else ""}</span>' if (etiqueta or especial) else ""
-    return (f'<div class="dd {clase}">{_DADO}<span class="dd-num">{html.escape(str(datos["total"]))}</span>'
-            f'<div class="dd-txt"><b>{quien}{razon}</b><small>{html.escape(str(datos.get("formula", "")))} · {_cuenta(datos)}{contra}</small></div>'
-            f'{chip}</div>')
+    lado = "dd-yo" if mia else "dd-otro"
+    return (f'<div class="dd {clase} {lado}">{_DADO}<span class="dd-num">{html.escape(str(datos["total"]))}</span>'
+            f'<div class="dd-txt"><b>{prefijo}{razon}</b><small>{html.escape(str(datos.get("formula", "")))} · {_cuenta(datos)}{contra}</small></div>'
+            f'{f"<span class=dd-res>{chip}</span>" if chip else ""}</div>')
 
 
 def html_duelo(reg_a: dict, reg_b: dict) -> str:
@@ -413,6 +449,7 @@ def plan_dados(tool_calls: list) -> dict:
     Dos tiradas seguidas con distinto "roller" (jugador / enemigo) y ambas con dificultad se juntan en un duelo
     que se muestra en la posición de la segunda; la primera no se dibuja aparte.
     """
+    _inferir_rollers(tool_calls)
     ids = [i for i, r in enumerate(tool_calls) if _datos_dado(r)]
     plan, n = {}, 0
     while n < len(ids):
