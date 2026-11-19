@@ -62,7 +62,7 @@ INCLUDE_THOUGHTS = os.getenv("DM_INCLUDE_THOUGHTS", "1") != "0"
 THINKING_BUDGET = int(os.getenv("GEMINI_THINKING_BUDGET", "-1"))
 
 # Tope de pasos del grafo (cada tool call consume ~2). Evita bucles infinitos.
-RECURSION_LIMIT = 25
+RECURSION_LIMIT = 55
 
 # Intentos TOTALES por llamada al modelo (incluye el pedido original: 4 = 1 pedido + 3
 # reintentos, con esperas de ~1, 2 y 4 s). Se reintenta ante 429/5xx y también ante

@@ -34,9 +34,9 @@ API_FUENTES = {
 }
 
 # Umbral de distancia L2 para considerar un fragmento relevante en la búsqueda vectorial.
-# Con gemini-embedding-2 normalizado: coincidencias buenas tienen distancia < 0.75;
-# fragmentos irrelevantes superan 0.80-0.90. Si todos superan este umbral, se activa el fallback a la API.
-UMBRAL = 0.9   # provisional, hay que calibrarlo (ver abajo)
+# Con gemini-embedding-2 normalizado: coincidencias buenas tienen distancia < 0.70;
+# fragmentos superiores se descartan para activar el fallback a la API de Open5e.
+UMBRAL = 0.70
 UMBRAL_DISTANCIA = UMBRAL
 
 # Ruta al vectorstore guardado en disco
