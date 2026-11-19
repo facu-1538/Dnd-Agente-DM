@@ -10,13 +10,26 @@ import re
 from pathlib import Path
 from dotenv import load_dotenv
 
+import requests
 from langchain_community.vectorstores import FAISS
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
 from rag.metadata import normalizar_escuela, normalizar_tipo
+from rag.formatters import format_spell, format_monster, format_condition, format_class, format_simple
 
 # Cargar variables de entorno
 load_dotenv()
+
+API_BASE = "https://api.open5e.com"
+
+# categoría -> (endpoint, formateador). Sin filtro de documento, para traer también contenido fuera del SRD.
+API_FUENTES = {
+    "spells":     ("/spells/",        format_spell),
+    "monsters":   ("/monsters/",      format_monster),
+    "conditions": ("/v2/conditions/", format_condition),
+    "classes":    ("/v2/classes/",    format_class),
+    "rules":      ("/v2/rules/",      lambda i: format_simple(i, ["desc"])),
+}
 
 # Ruta al vectorstore guardado en disco
 VECTOR_DB_DIR = Path("storage/vector_db")
@@ -295,6 +308,40 @@ class RAGRetriever:
             print(f"  No se encontraron resultados en categoría '{category}', buscando en general...")
             return self.search(query, k=k)
         return resultado
+
+    def search_api(self, query: str, category: str | None = None, k: int = 3) -> str | None:
+        """
+        Fallback: busca en la API de Open5e cuando el RAG local no tiene la respuesta.
+        Devuelve None si la API no responde o no encuentra nada.
+        """
+        categorias = [category] if category in API_FUENTES else ["spells", "monsters", "classes"]
+        partes, fuentes = [], []
+
+        for cat in categorias:
+            endpoint, formateador = API_FUENTES[cat]
+            try:
+                r = requests.get(
+                    f"{API_BASE}{endpoint}",
+                    params={"search": query, "limit": k},
+                    timeout=10,
+                )
+                r.raise_for_status()
+                items = r.json().get("results", [])
+            except requests.exceptions.RequestException:
+                continue  # sin reintentos: no queremos frenar al agente
+
+            for item in items[:k]:
+                fuente = f"open5e API › {cat} › {item.get('name', '?')}"
+                if fuente not in fuentes:
+                    fuentes.append(fuente)
+                partes.append(f"[Fuente: {fuente}]\n{formateador(item)}")
+
+        if not partes:
+            return None
+        return (
+            "\n\n---\n\n".join(partes[:k])
+            + "\n\nFUENTES CONSULTADAS: " + "; ".join(fuentes[:k])
+        )
 
 
 def get_retriever() -> RAGRetriever:

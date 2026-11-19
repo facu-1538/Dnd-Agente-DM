@@ -33,6 +33,7 @@ def _json(datos: dict) -> str:
 # ---------------------------------------------------------------------------
 
 _CATEGORIAS_RAG = {"spells", "monsters", "conditions", "armor", "weapons", "rules", "classes"}
+_SIN_RESULTADO = ("Sin resultados", "No se encontró", "No hay base de conocimientos")
 
 
 @tool
@@ -93,6 +94,11 @@ def query_rules_rag(query: str, category: str = "general", spell_level: int = -1
         monster_type=monster_type.strip() or None,
         max_cr=max_cr if max_cr >= 0 else None,
     )
+
+    if resultado.startswith(_SIN_RESULTADO):
+        desde_api = retriever.search_api(query, categoria)
+        if desde_api:
+            resultado = desde_api
 
     # Registro de la partida: qué se consultó y de qué documentos salió
     fuentes = re.search(r"^FUENTES CONSULTADAS: (.+)$", resultado, flags=re.M)
