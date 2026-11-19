@@ -28,8 +28,15 @@ API_FUENTES = {
     "monsters":   ("/monsters/",      format_monster),
     "conditions": ("/v2/conditions/", format_condition),
     "classes":    ("/v2/classes/",    format_class),
+    "weapons":    ("/v2/weapons/",    lambda i: format_simple(i, ["damage_dice", "damage_type", "range", "properties"])),
+    "armor":      ("/v2/items/?is_armor=true", lambda i: format_simple(i, ["desc", "armor", "cost", "weight"])),
     "rules":      ("/v2/rules/",      lambda i: format_simple(i, ["desc"])),
 }
+
+# Umbral de distancia L2 para considerar un fragmento relevante en la búsqueda vectorial.
+# Con gemini-embedding-2 normalizado: coincidencias buenas tienen distancia < 0.75;
+# fragmentos irrelevantes superan 0.80. Si todos superan este umbral, se activa el fallback a la API.
+UMBRAL_DISTANCIA = 0.80
 
 # Ruta al vectorstore guardado en disco
 VECTOR_DB_DIR = Path("storage/vector_db")
@@ -267,13 +274,16 @@ class RAGRetriever:
                                          ("tipo", tipo), ("CR máx", max_cr)) if v is not None and v != ""}
             if filtros:
                 filtro = self._crear_filtro(category or None, spell_level, escuela, tipo, max_cr)
-                similares = self.vectorstore.similarity_search(
+                similares_raw = self.vectorstore.similarity_search_with_score(
                     query, k=k, filter=filtro, fetch_k=self.vectorstore.index.ntotal
                 )
                 por_titulo = self._coincidencias_titulo(query, filtro, category)
             else:
-                similares = self.vectorstore.similarity_search(query, k=k)
+                similares_raw = self.vectorstore.similarity_search_with_score(query, k=k)
                 por_titulo = self._coincidencias_titulo(query, lambda m: True, None)
+
+            # Filtrar por umbral de distancia: descartar fragmentos lejanos/irrelevantes
+            similares = [doc for doc, score in similares_raw if score <= UMBRAL_DISTANCIA]
 
             documentos, vistos = [], set()
             for doc in por_titulo + similares:           # primero lo nombrado, luego lo parecido
