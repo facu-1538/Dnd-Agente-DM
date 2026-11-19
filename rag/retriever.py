@@ -35,8 +35,9 @@ API_FUENTES = {
 
 # Umbral de distancia L2 para considerar un fragmento relevante en la búsqueda vectorial.
 # Con gemini-embedding-2 normalizado: coincidencias buenas tienen distancia < 0.75;
-# fragmentos irrelevantes superan 0.80. Si todos superan este umbral, se activa el fallback a la API.
-UMBRAL_DISTANCIA = 0.80
+# fragmentos irrelevantes superan 0.80-0.90. Si todos superan este umbral, se activa el fallback a la API.
+UMBRAL = 0.9   # provisional, hay que calibrarlo (ver abajo)
+UMBRAL_DISTANCIA = UMBRAL
 
 # Ruta al vectorstore guardado en disco
 VECTOR_DB_DIR = Path("storage/vector_db")
@@ -274,16 +275,15 @@ class RAGRetriever:
                                          ("tipo", tipo), ("CR máx", max_cr)) if v is not None and v != ""}
             if filtros:
                 filtro = self._crear_filtro(category or None, spell_level, escuela, tipo, max_cr)
-                similares_raw = self.vectorstore.similarity_search_with_score(
+                pares = self.vectorstore.similarity_search_with_score(
                     query, k=k, filter=filtro, fetch_k=self.vectorstore.index.ntotal
                 )
                 por_titulo = self._coincidencias_titulo(query, filtro, category)
             else:
-                similares_raw = self.vectorstore.similarity_search_with_score(query, k=k)
+                pares = self.vectorstore.similarity_search_with_score(query, k=k)
                 por_titulo = self._coincidencias_titulo(query, lambda m: True, None)
 
-            # Filtrar por umbral de distancia: descartar fragmentos lejanos/irrelevantes
-            similares = [doc for doc, score in similares_raw if score <= UMBRAL_DISTANCIA]
+            similares = [doc for doc, dist in pares if dist <= UMBRAL]
 
             documentos, vistos = [], set()
             for doc in por_titulo + similares:           # primero lo nombrado, luego lo parecido
