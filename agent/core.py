@@ -4,7 +4,7 @@ core.py - Orquestador del Agente Dungeon Master
 Construye el agente con `create_agent` de LangChain (sin Deep Agents) y expone:
   - stream_agent(): generador de eventos para que la UI muestre en vivo cada tool,
     el razonamiento y el texto de la respuesta.
-  - run_agent():    versión bloqueante (la usa la bienvenida de app.py).
+  - run_agent():    versión bloqueante para otros clientes.
 
 Memoria de corto plazo: un checkpointer SQLite (SqliteSaver, storage/memoria.db) guarda el estado
 de la conversación por `thread_id`; la interfaz usa el id de la partida como thread_id, así que
@@ -14,6 +14,7 @@ nivel de módulo; Streamlit re-ejecuta app.py en cada interacción pero NO re-im
 """
 
 import os
+import json
 import pathlib
 import re
 import sqlite3
@@ -39,7 +40,7 @@ from agent.tools import (
     switch_and_render_map,
     damage_player,
     heal_player,
-    set_character,
+    get_starting_rules,
     manage_enemy,
     generate_adventure_report,
 )
@@ -79,7 +80,7 @@ TIMEOUT = float(os.getenv("GEMINI_TIMEOUT", "30"))
 
 _TOOLS = [
     query_rules_rag, execute_dice_roll, switch_and_render_map,
-    damage_player, heal_player, set_character, manage_enemy, generate_adventure_report,
+    damage_player, heal_player, get_starting_rules, manage_enemy, generate_adventure_report,
 ]
 
 # Base de la memoria del agente (configurable por entorno; las pruebas usan una temporal)
@@ -185,10 +186,15 @@ def _estado_jugador() -> str:
             f"{d['nombre']} {d['hp']}/{d['max_hp']} HP" for d in estado["npcs"].values()
         ) or "ninguno"
 
-        return (
+        linea = (
             f"[ESTADO: {ficha} | HP {j['hp']}/{j['max_hp']} | oro {j['oro']}, XP {j['experiencia']} | "
             f"ubicación: {ubicacion} | enemigos: {enemigos}]\n"
         )
+        if j.get("creacion") == "guiada-v1":
+            campos = ("atributos", "modificadores", "competencia", "ca", "habilidades", "salvaciones",
+                      "ataques", "equipo", "magia", "rasgos", "estilo", "subclase", "reglamento")
+            linea += "[FICHA CONFIRMADA: " + json.dumps({c: j.get(c) for c in campos}, ensure_ascii=False) + "]\n"
+        return linea
     except Exception:
         return ""
 

@@ -66,19 +66,12 @@ st.html(
 )
 
 # ---------------------------------------------------------------------------
-# VERIFICACIÓN DE API KEY — Detenemos la app si no está configurada
+# La creación guiada funciona sin API key; el chat requiere Gemini.
 # ---------------------------------------------------------------------------
-if not os.getenv("GEMINI_API_KEY"):
-    st.error(
-        "Editá el archivo `.env` y agregá tu clave de API.",
-        title="GEMINI_API_KEY no configurada",
-        icon=":material/key:",
-    )
-    st.caption("Obtené una clave en https://aistudio.google.com/app/apikey")
-    st.stop()
+_api_key_available = bool(os.getenv("GEMINI_API_KEY"))
 
 # ---------------------------------------------------------------------------
-# IMPORTACIONES DE MÓDULOS PROPIOS (después de verificar la API key)
+# IMPORTACIONES DE MÓDULOS PROPIOS
 # ---------------------------------------------------------------------------
 try:
     from game_engine.state_manager import get_state_manager
@@ -144,6 +137,7 @@ if st.session_state.get("mensajes_de") != st.session_state.partida_id:
 # nombre de la tool -> (icono Material con color, título legible)
 TOOL_UI = {
     "query_rules_rag": (":blue[:material/menu_book:]", "Consulta de reglas"),
+    "get_starting_rules": (":blue[:material/menu_book:]", "Guía de aventura"),
     "execute_dice_roll": (":orange[:material/casino:]", "Tirada de dados"),
     "switch_and_render_map": (":green[:material/map:]", "Mapa del dungeon"),
     "damage_player": (":red[:material/heart_broken:]", "Daño al jugador"),
@@ -209,7 +203,7 @@ def resumen_tool(registro: dict) -> str:
             return f"−{datos.get('danio')} HP ({datos.get('hp_anterior')} → {datos['nuevo_hp']})"
         if nombre == "heal_player" and datos and "nuevo_hp" in datos:
             return f"+{datos.get('curacion')} HP ({datos.get('hp_anterior')} → {datos['nuevo_hp']})"
-        if nombre == "query_rules_rag":
+        if nombre in {"query_rules_rag", "get_starting_rules"}:
             # Encabezados "[Fuente 1: monsters.txt › Goblin]": se resume el primero
             fuentes = re.findall(r"^\[Fuente \d+: (.+?)\]", salida, flags=re.M)
             if fuentes:
@@ -294,7 +288,7 @@ def mostrar_resultado(registro: dict):
         st.markdown(linea)
         if datos.get("reason"):
             st.caption(datos["reason"])
-    elif nombre == "query_rules_rag":
+    elif nombre in {"query_rules_rag", "get_starting_rules"}:
         # Primero, de qué documentos salió la información (es lo que el DM debe citar)
         m = re.search(r"^FUENTES CONSULTADAS: (.+)$", salida, flags=re.M)
         if m:
@@ -515,7 +509,7 @@ def fuentes_de(tool_calls: list) -> list:
     """Documentos de origen ("archivo.txt › Título") de todas las consultas al RAG del turno, sin repetir."""
     vistas: list = []
     for tc in tool_calls:
-        if tc.get("name") != "query_rules_rag":
+        if tc.get("name") not in {"query_rules_rag", "get_starting_rules"}:
             continue
         m = re.search(r"^FUENTES CONSULTADAS: (.+)$", tc.get("output", ""), flags=re.M)
         for fuente in (m.group(1).split(";") if m else []):
@@ -752,6 +746,16 @@ with st.sidebar:
 
         if hp is not None and max_hp:
             st.html(html_ficha(info))
+            if info.get("creacion") == "guiada-v1":
+                with st.popover("Ver ficha completa", icon=":material/badge:", width="stretch"):
+                    st.markdown(f"**{info['clase']} · CA {info['ca']} · Competencia +{info['competencia']}**")
+                    st.table([{"Atributo": a.capitalize(), "Valor": v, "Modificador": f"{info['modificadores'][a]:+d}"}
+                              for a, v in info["atributos"].items()])
+                    for attack in info["ataques"]:
+                        st.markdown(f"{attack['nombre']}: ataque **{attack['bonificador']:+d}**, daño **{attack['danio']}**")
+                    st.caption("Equipo: " + ", ".join(info["equipo"]))
+                    if info["magia"].get("preparados"):
+                        st.caption("Hechizos preparados: " + ", ".join(info["magia"]["preparados"] + info["magia"]["dominio"]))
 
             with st.container(key="vida"):
                 st.html(html_seccion("favorite", "Vida", "#ef5b6c", f"{hp} / {max_hp}"))
@@ -839,6 +843,28 @@ with st.sidebar:
 st.title("Dungeon Master", icon=":material/swords:")
 st.caption("Agente de D&D 5e con RAG y herramientas · Gemini + LangChain + LangGraph")
 
+if not _sm.get_player_info().get("ficha_creada"):
+    from ui.character_creator import render_creator
+    if choices := render_creator(st.session_state.partida_id):
+        try:
+            hero = _sm.confirm_character(choices)
+        except ValueError as e:
+            st.error(str(e))
+        else:
+            welcome = (f"**{hero['nombre']}**, tu camino como **{hero['clase']}** comienza aquí.\n\n"
+                       "Ante vos se abre una antigua mazmorra élfica. La piedra húmeda refleja la luz de las antorchas; "
+                       "desde la entrada distinguís un pasaje hacia la biblioteca, otro hacia la armería y otro hacia la sala de guardia.\n\n"
+                       "Tu ficha ya está preparada. **¿Qué hacés primero?**")
+            seed_conversation(st.session_state.partida_id, welcome)
+            st.session_state.messages.append({"role": "assistant", "content": welcome, "tool_calls": []})
+            guardar_historial()
+            st.rerun()
+    st.stop()
+
+if not _api_key_available:
+    st.info("Tu personaje está listo. Para conversar con el Dungeon Master, agregá GEMINI_API_KEY en el archivo .env.",
+            icon=":material/key:")
+
 if not _vectorstore_available:
     st.warning(
         "El DM funcionará sin consultar el reglamento de D&D 5e. "
@@ -870,26 +896,19 @@ def precargar_rag() -> bool:
         return False
 
 
-if _vectorstore_available:
+if _vectorstore_available and _api_key_available:
     with st.spinner("Preparando el reglamento…"):
         precargar_rag()
 
 # ---------------------------------------------------------------------------
 # MENSAJE DE BIENVENIDA
 # ---------------------------------------------------------------------------
-BIENVENIDA = """**Bienvenido, aventurero.** Soy tu Dungeon Master.
+BIENVENIDA = """**Bienvenido a la mazmorra.** Tu personaje ya está preparado.
 
-Ante ti se alza la entrada de una antigua mazmorra élfica, olvidada por los siglos. Las antorchas parpadean con una luz tenue y el aire huele a piedra húmeda y a algo antiguo.
+Ante vos se abre la entrada de una antigua mazmorra élfica. Desde aquí podés explorar la biblioteca,
+la armería o la sala de guardia. Las antorchas iluminan los primeros pasos de tu aventura.
 
-Antes de cruzar el umbral, forjemos a tu héroe. Dime, en un solo mensaje:
-
-- **Raza:** humano, elfo, enano o mediano
-- **Clase:** guerrero, mago, pícaro o clérigo
-- **Nombre:** el que quieras
-
-Si prefieres que lo elija yo, escribe *sortea* y te propondré una combinación.
-
-*El destino aguarda.*"""
+**¿Qué hacés primero?**"""
 
 def resumen_para_retomar() -> str:
     """
@@ -1001,7 +1020,7 @@ pintar_riel()
 # INPUT DEL USUARIO + STREAMING DEL AGENTE
 # ---------------------------------------------------------------------------
 # submit_mode="disable": mientras el agente trabaja no se puede enviar otro mensaje
-if prompt := st.chat_input("¿Qué hace tu personaje?", submit_mode="disable"):
+if prompt := st.chat_input("¿Qué hace tu personaje?", submit_mode="disable", disabled=not _api_key_available):
 
     st.session_state.messages.append({"role": "user", "content": prompt, "tool_calls": []})
     guardar_historial()      # el mensaje del jugador se guarda ANTES del turno: si se corta, no se pierde

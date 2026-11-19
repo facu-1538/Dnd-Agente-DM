@@ -8,13 +8,15 @@ el vectorstore FAISS construido por setup_rag.py.
 import os
 import re
 from pathlib import Path
+import faiss
+import numpy as np
 from dotenv import load_dotenv
 
 import requests
 from langchain_community.vectorstores import FAISS
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
-from rag.metadata import normalizar_escuela, normalizar_tipo
+from rag.metadata import normalizar_escuela, normalizar_tipo, extraer_metadatos
 from rag.formatters import format_spell, format_monster, format_condition, format_class, format_simple
 
 # Cargar variables de entorno
@@ -22,7 +24,7 @@ load_dotenv()
 
 API_BASE = "https://api.open5e.com"
 
-# categoría -> (endpoint, formateador). Sin filtro de documento, para traer también contenido fuera del SRD.
+# categoría -> (endpoint, formateador). El fallback valida procedencia SRD 2014.
 API_FUENTES = {
     "spells":     ("/spells/",        format_spell),
     "monsters":   ("/monsters/",      format_monster),
@@ -33,9 +35,9 @@ API_FUENTES = {
     "rules":      ("/v2/rules/",      lambda i: format_simple(i, ["desc"])),
 }
 
-# Umbral de distancia L2 para considerar un fragmento relevante en la búsqueda vectorial.
-# Con gemini-embedding-2 normalizado: coincidencias buenas tienen distancia < 0.70;
-# fragmentos superiores se descartan para activar el fallback a la API de Open5e.
+# Umbral sobre la distancia L2 cuadrada del IndexFlatL2; conserva el valor upstream.
+# Es un criterio de relevancia que debe calibrarse con consultas representativas.
+# Sin vecinos aceptados ni coincidencias de título, la tool prueba el fallback.
 UMBRAL = 0.70
 UMBRAL_DISTANCIA = UMBRAL
 
@@ -243,16 +245,44 @@ class RAGRetriever:
         candidatos.sort(key=lambda x: -x[0])             # el título más largo es el más específico
         return [d for _, d in candidatos[:maximo]]
 
+    def _buscar_pre_filtrado(self, query: str, filtro, k: int) -> list:
+        """Selecciona IDs por metadatos y compara solo sus vectores en el IndexFlat.
+
+        IDSelectorArray tiene una ruta optimizada en FAISS IndexFlat (el índice
+        construido por setup_rag.py): calcula distancias solo para los IDs dados.
+        No reconstruye el índice ni vuelve a generar embeddings del corpus.
+        """
+        candidatos = []
+        for indice, doc_id in self.vectorstore.index_to_docstore_id.items():
+            doc = self.vectorstore.docstore.search(doc_id)
+            if filtro(doc.metadata):
+                candidatos.append(indice)
+
+        if not candidatos:
+            return []                       # tampoco se gasta un embedding de consulta
+
+        vector = np.asarray([self.embeddings.embed_query(query)], dtype=np.float32)
+        if self.vectorstore._normalize_L2:
+            faiss.normalize_L2(vector)
+        selector = faiss.IDSelectorArray(np.asarray(candidatos, dtype=np.int64))
+        parametros = faiss.SearchParameters(sel=selector)
+        distancias, indices = self.vectorstore.index.search(
+            vector, min(k, len(candidatos)), params=parametros
+        )
+        return [
+            (self.vectorstore.docstore.search(self.vectorstore.index_to_docstore_id[int(i)]), float(score))
+            for score, i in zip(distancias[0], indices[0]) if i >= 0
+        ]
+
     def search_filtered(self, query: str, k: int = 4, category: str | None = None,
                         spell_level: int | None = None, school: str | None = None,
                         monster_type: str | None = None, max_cr: float | None = None) -> str:
         """
         Búsqueda híbrida (self-query): similitud vectorial restringida por metadatos.
 
-        Los filtros se aplican sobre TODO el índice (fetch_k = tamaño del índice); FAISS filtra después
-        de traer los más cercanos, así que con el valor por defecto (20) una categoría chica casi nunca
-        devolvía nada. Los fragmentos cuyo título aparece en la consulta van primero. El total nunca
-        supera k, para no saturar el contexto del agente.
+        Primero se seleccionan los IDs que cumplen todos los metadatos y después FAISS compara
+        solo esos vectores. Sin candidatos, no se pide un embedding. Los fragmentos cuyo título
+        aparece en la consulta van primero. El total nunca supera k, para no saturar el contexto.
 
         Args:
             query: Consulta en lenguaje natural.
@@ -275,15 +305,13 @@ class RAGRetriever:
                                          ("tipo", tipo), ("CR máx", max_cr)) if v is not None and v != ""}
             if filtros:
                 filtro = self._crear_filtro(category or None, spell_level, escuela, tipo, max_cr)
-                pares = self.vectorstore.similarity_search_with_score(
-                    query, k=k, filter=filtro, fetch_k=self.vectorstore.index.ntotal
-                )
+                pares = self._buscar_pre_filtrado(query, filtro, k)
                 por_titulo = self._coincidencias_titulo(query, filtro, category)
             else:
                 pares = self.vectorstore.similarity_search_with_score(query, k=k)
                 por_titulo = self._coincidencias_titulo(query, lambda m: True, None)
 
-            similares = [doc for doc, dist in pares if dist <= UMBRAL]
+            similares = [doc for doc, dist in pares if dist <= UMBRAL_DISTANCIA]
 
             documentos, vistos = [], set()
             for doc in por_titulo + similares:           # primero lo nombrado, luego lo parecido
@@ -319,20 +347,28 @@ class RAGRetriever:
             return self.search(query, k=k)
         return resultado
 
-    def search_api(self, query: str, category: str | None = None, k: int = 3) -> str | None:
+    def search_api(self, query: str, category: str | None = None, k: int = 3,
+                   spell_level: int | None = None, school: str | None = None,
+                   monster_type: str | None = None, max_cr: float | None = None) -> str | None:
         """
         Fallback: busca en la API de Open5e cuando el RAG local no tiene la respuesta.
         Devuelve None si la API no responde o no encuentra nada.
         """
-        categorias = [category] if category in API_FUENTES else ["spells", "monsters", "classes"]
+        categorias = [category] if category in API_FUENTES else ["spells", "monsters", "rules"]
         partes, fuentes = [], []
+        escuela = normalizar_escuela(school) if school else None
+        tipo = normalizar_tipo(monster_type) if monster_type else None
+        filtro = self._crear_filtro(category, spell_level, escuela, tipo, max_cr)
 
         for cat in categorias:
             endpoint, formateador = API_FUENTES[cat]
             try:
+                params = {"search": query, "limit": 100,
+                          "document__key" if endpoint.startswith("/v2/") else "document__slug":
+                              "srd-2014" if endpoint.startswith("/v2/") else "wotc-srd"}
                 r = requests.get(
                     f"{API_BASE}{endpoint}",
-                    params={"search": query, "limit": k},
+                    params=params,
                     timeout=10,
                 )
                 r.raise_for_status()
@@ -340,11 +376,26 @@ class RAGRetriever:
             except requests.exceptions.RequestException:
                 continue  # sin reintentos: no queremos frenar al agente
 
-            for item in items[:k]:
+            items.sort(key=lambda item: item.get("name", "").casefold() != query.strip().casefold())
+            for item in items:
+                documento = item.get("document") or {}
+                origen = (item.get("document__slug") or item.get("document__key")
+                          or ((documento.get("key") or documento.get("slug"))
+                              if isinstance(documento, dict) else documento))
+                if origen not in {"srd-2014", "wotc-srd"}:
+                    continue
+                texto = formateador(item)
+                meta = {"categoria": cat, **extraer_metadatos(cat, texto)}
+                if not filtro(meta):
+                    continue
                 fuente = f"open5e API › {cat} › {item.get('name', '?')}"
                 if fuente not in fuentes:
                     fuentes.append(fuente)
-                partes.append(f"[Fuente: {fuente}]\n{formateador(item)}")
+                    partes.append(f"[Fuente: {fuente}]\n{texto}")
+                if len(partes) >= k:
+                    break
+            if len(partes) >= k:
+                break
 
         if not partes:
             return None

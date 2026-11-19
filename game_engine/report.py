@@ -325,12 +325,14 @@ def build_report(summary: str = "", ruta_mapa: str = "") -> dict:
     # --- El héroe --------------------------------------------------------
     story += _titulo("El héroe", e)
     celdas = [
-        ("Nombre", j["nombre"]), ("Raza", j["raza"] or "—"),
+        ("Nombre", j["nombre"]), ("Raza", j["raza"]) if j["raza"] else ("Reglamento", "SRD 2014"),
         ("Clase", j["clase"]), ("Nivel", j["nivel"]),
         ("Vida final", f"{j['hp']} / {j['max_hp']}"), ("Oro", j["oro"]),
         ("Experiencia", f"{j['experiencia']} XP"), ("Salas exploradas",
                                                     f"{len(estado['salas_descubiertas'])} de {len(DUNGEON_LAYOUT)}"),
     ]
+    if j.get("ca") is not None:
+        celdas.extend([("Clase de armadura", j["ca"]), ("Competencia", f"+{j['competencia']}")])
     filas = []
     for i in range(0, len(celdas), 2):
         fila = []
@@ -345,6 +347,10 @@ def build_report(summary: str = "", ruta_mapa: str = "") -> dict:
         ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
     ]))
     story += [ficha]
+    if j.get("atributos"):
+        story.append(Paragraph(_seguro("Atributos: " + " · ".join(
+            f"{a.capitalize()} {v} ({j['modificadores'][a]:+d})" for a, v in j["atributos"].items())), e["pie"]))
+        story.append(Paragraph(_seguro("Equipo: " + ", ".join(j["equipo"])), e["pie"]))
 
     # --- Resumen ---------------------------------------------------------
     story += _titulo("Resumen de la aventura", e)
