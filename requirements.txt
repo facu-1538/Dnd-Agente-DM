@@ -1,6 +1,6 @@
 # Dependencias directas del proyecto, con las versiones con las que se probó
 # (Python 3.14, Windows 11). Cada una se usa en el código; no hay paquetes sobrantes.
-# Las dependencias transitivas (google-genai, numpy, etc.) las resuelve pip.
+# Las dependencias transitivas (google-genai, etc.) las resuelve pip.
 
 # Agente y orquestación
 langchain==1.5.0                  # create_agent
@@ -13,6 +13,7 @@ langchain-google-genai==4.5.0     # ChatGoogleGenerativeAI y GoogleGenerativeAIE
 langchain-community==0.4.2        # integración con FAISS
 langchain-text-splitters==1.1.3   # chunking del corpus
 faiss-cpu==1.16.0                 # base vectorial local
+numpy==2.4.6                     # vectores de consulta y selección de IDs para FAISS (Python >=3.11)
 requests==2.34.2                  # descarga del corpus desde la API Open5e (setup_rag.py)
 tqdm==4.70.1                      # barra de progreso de la ingesta
 

@@ -1,6 +1,6 @@
 /*
  * Estilos mínimos. Colores, fuentes y radios van en .streamlit/config.toml;
- * acá solo lo que el tema no puede expresar: la tipografía de lectura del DM.
+ * acá se definen la tipografía de lectura y los componentes visuales del juego.
  * Se apunta a las clases .st-key-narr* (contenedores con key= en app.py), no a clases internas.
  */
 @import url('https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,500;0,600;1,400&display=swap');
@@ -263,3 +263,57 @@
 [data-testid="stChatInput"] > div > div > div:first-child { flex: 1 1 auto; min-width: 0; }
 [data-testid="stChatInput"] > div > div > div:last-child { flex: none; width: auto !important; }
 [data-testid="stChatInput"] > div > div > div:last-child > div:first-child:empty { display: none; }
+
+/* Creación guiada: tarjetas de clase, pasos y ficha. */
+.creator-hero { padding: 1rem 0 1.4rem; max-width: 640px; }
+.creator-eyebrow, .creator-hero small { color: #d8b97b; font-size: .69rem; font-weight: 700; letter-spacing: .18em; }
+.creator-hero h2 { margin: .5rem 0 .6rem; font-size: clamp(2rem, 5vw, 3rem); line-height: 1.05; color: #f5edda; }
+.creator-hero p { margin: 0; color: #a7a4b7; font-size: 1rem; max-width: 490px; line-height: 1.65; }
+.creator-hero.compact { padding: .4rem 0 .5rem; }
+.creator-hero.compact h2 { font-size: 2rem; margin-bottom: .3rem; }
+.creator-steps { display: grid; grid-template-columns: repeat(3,1fr); gap: 12px; margin: .2rem 0 1.5rem; }
+.creator-steps > div { display: flex; align-items: center; gap: .55rem; padding: .7rem 0; border-bottom: 2px solid #2a2936; color: #777587; }
+.creator-steps b { font-size: .75rem; font-variant-numeric: tabular-nums; }
+.creator-steps span { font-size: .8rem; }
+.creator-steps .active { color: #f0d5a4; border-color: #d6a45d; }
+.creator-steps .done { color: #80bb9e; border-color: #427d63; }
+[class*="st-key-class_card_"] { gap: 0 !important; margin-bottom: 1rem; border: 1px solid #33313f; border-radius: 16px; overflow: hidden; background: #161620; transition: border-color .2s, transform .2s; }
+[class*="st-key-class_card_"]:hover { border-color: #746751; transform: translateY(-2px); }
+[class*="st-key-class_card_"]:has(.chosen) { border-color: var(--class-color, #d9b97c); outline: 1px solid #a28a5d; }
+.class-card { padding: 1.1rem 1.3rem 1rem; min-height: 300px; position: relative; }
+.class-art { height: 90px; position: relative; display: flex; align-items: center; color: var(--class-color); margin-bottom: .8rem; overflow: hidden; }
+.class-art::before { content: ''; position: absolute; height: 150px; width: 150px; left: -30px; top: -30px; background: radial-gradient(circle, color-mix(in srgb,var(--class-color) 16%,transparent), transparent 68%); }
+.class-glyph { font-family: 'Material Symbols Rounded', 'Material Symbols Outlined'; font-weight: 300; font-size: 3.4rem; line-height: 1; color: var(--class-color); z-index: 1; }
+.class-orbit { position: absolute; width: 78px; height: 78px; left: -10px; border: 1px solid color-mix(in srgb,var(--class-color) 24%,transparent); border-radius: 50%; transform: rotate(-20deg); }
+.class-number { margin-left: auto; align-self: flex-start; font-size: 3.7rem; color: var(--class-color); opacity: .12; font-weight: 600; line-height: 1; }
+.class-card > small { color: var(--class-color); font-size: .6rem; font-weight: 700; letter-spacing: .14em; }
+.class-card h3 { color: #f4ecda; font-size: 1.75rem; margin: .25rem 0 .5rem; }
+.class-card p { color: #aaa7bb; font-size: .85rem; line-height: 1.6; margin: 0 0 1rem; min-height: 65px; }
+.class-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.class-tags span { padding: .22rem .5rem; border-radius: 4px; background: color-mix(in srgb,var(--class-color) 8%,#171720); border: 1px solid color-mix(in srgb,var(--class-color) 20%,transparent); color: var(--class-color); font-size: .66rem; }
+[class*="st-key-class_card_"] [data-testid="stButton"] { padding: 0 .8rem .8rem; }
+.chosen-banner { display: flex; align-items: center; gap: 1rem; padding: 1rem 1.2rem; margin-bottom: 1.2rem; border: 1px solid color-mix(in srgb,var(--class-color) 30%,transparent); background: linear-gradient(110deg,color-mix(in srgb,var(--class-color) 8%,#14141d),#14141d); border-radius: 14px; }
+.chosen-banner .class-glyph { font-size: 2.7rem; }
+.chosen-banner > div { display: flex; flex-direction: column; gap: .15rem; }
+.chosen-banner small, .review-name small { color: #a7a2b5; letter-spacing: .13em; font-size: .6rem; }
+.chosen-banner strong { color: #f5eddb; font-size: 1.3rem; }
+.chosen-banner > div > span { color: var(--class-color); font-size: .75rem; }
+.hero-stats { display: grid; grid-template-columns: repeat(3,1fr); gap: 10px; margin: 1rem 0; }
+.hero-stats > div { border: 1px solid #383341; background: #191822; padding: .9rem; border-radius: 10px; }
+.hero-stats small { display: block; color: #a7a0b3; font-size: .6rem; letter-spacing: .12em; margin-bottom: .4rem; }
+.hero-stats strong { color: #e5c48d; font-size: 1.4rem; }
+.ability-grid { display: grid; grid-template-columns: repeat(6,1fr); gap: 7px; margin-bottom: 1rem; }
+.ability-grid > div { text-align: center; padding: .7rem .2rem; border: 1px solid #302e3a; border-radius: 8px; }
+.ability-grid small, .ability-grid b, .ability-grid span { display: block; }
+.ability-grid small { color: #9e98ad; font-size: .6rem; letter-spacing: .08em; }
+.ability-grid b { color: #f3e8d2; font-size: 1.4rem; margin: .15rem 0; }
+.ability-grid span { color: #c9ac78; font-size: .8rem; }
+.review-name h2 { color: #f1d9a8; margin: .35rem 0; font-size: 2.4rem; }
+.review-name p { color: #a7a0b3; }
+@media (max-width: 600px) {
+ .class-card { min-height: auto; padding: .8rem; }
+ .class-art { height: 65px; }
+ .class-card p { min-height: 0; }
+ .creator-steps span { font-size: .67rem; }
+ .ability-grid { grid-template-columns: repeat(3,1fr); }
+}

@@ -1,0 +1,543 @@
+{
+  "ruleset": "srd-2014",
+  "source": "https://media.wizards.com/2023/downloads/dnd/SRD_CC_v5.1.pdf",
+  "attribution": "This work includes material taken from the System Reference Document 5.1 (SRD 5.1) by Wizards of the Coast LLC, available at https://dnd.wizards.com/resources/systems-reference-document. The SRD 5.1 is licensed under the Creative Commons Attribution 4.0 International License available at https://creativecommons.org/licenses/by/4.0/legalcode. Adaptación y selección inicial en español; 100 HP y ausencia de raza/trasfondo son reglas propias de esta aplicación.",
+  "skills": {
+    "Atletismo": "fuerza",
+    "Acrobacias": "destreza",
+    "Sigilo": "destreza",
+    "Juego de manos": "destreza",
+    "Arcanos": "inteligencia",
+    "Historia": "inteligencia",
+    "Investigación": "inteligencia",
+    "Naturaleza": "inteligencia",
+    "Religión": "inteligencia",
+    "Medicina": "sabiduria",
+    "Percepción": "sabiduria",
+    "Perspicacia": "sabiduria",
+    "Supervivencia": "sabiduria",
+    "Trato con animales": "sabiduria",
+    "Engaño": "carisma",
+    "Intimidación": "carisma",
+    "Interpretación": "carisma",
+    "Persuasión": "carisma"
+  },
+  "classes": {
+    "fighter": {
+      "label": "Guerrero",
+      "title": "Fighter",
+      "icon": "swords",
+      "color": "#e7a75a",
+      "tag": "ACERO Y CORAJE",
+      "role": "Primera línea",
+      "difficulty": "Directo",
+      "description": "Abrí camino con tu espada. Resistís los golpes y elegís cómo dominar el combate.",
+      "focus": "Fuerza · Constitución",
+      "abilities": {
+        "fuerza": 15,
+        "destreza": 13,
+        "constitucion": 14,
+        "inteligencia": 8,
+        "sabiduria": 12,
+        "carisma": 10
+      },
+      "saves": [
+        "fuerza",
+        "constitucion"
+      ],
+      "skills": [
+        "Acrobacias",
+        "Atletismo",
+        "Historia",
+        "Intimidación",
+        "Percepción",
+        "Perspicacia",
+        "Supervivencia",
+        "Trato con animales"
+      ],
+      "skill_count": 2,
+      "default_skills": [
+        "Atletismo",
+        "Percepción"
+      ],
+      "features": [
+        "Estilo de combate: elegí Defensa o Duelo.",
+        "Segundo aliento: una acción adicional recupera 1d10 + nivel de HP; un uso por descanso corto o largo."
+      ],
+      "gear": {
+        "guardian": {
+          "label": "Espada y escudo",
+          "description": "Cota de malla, escudo y espada larga. Protección para combatir de cerca.",
+          "ac": 18,
+          "attacks": [
+            {
+              "nombre": "Espada larga",
+              "dado": "1d8",
+              "atributo": "fuerza",
+              "tipo": "cuerpo a cuerpo"
+            }
+          ],
+          "items": [
+            "Cota de malla",
+            "Escudo",
+            "Espada larga",
+            "Dos hachas de mano",
+            "Equipo de exploración de mazmorras"
+          ]
+        },
+        "duelist": {
+          "label": "Espada a dos manos",
+          "description": "Cota de malla y espada larga a dos manos. Cambiás el escudo por un dado de daño mayor.",
+          "ac": 16,
+          "attacks": [
+            {
+              "nombre": "Espada larga a dos manos",
+              "dado": "1d10",
+              "atributo": "fuerza",
+              "tipo": "cuerpo a cuerpo"
+            }
+          ],
+          "items": [
+            "Cota de malla",
+            "Espada larga",
+            "Espada corta",
+            "Dos hachas de mano",
+            "Equipo de exploración de mazmorras"
+          ]
+        }
+      },
+      "styles": [
+        "Defensa",
+        "Duelo"
+      ],
+      "cantrips": [],
+      "cantrip_count": 0,
+      "spells": [],
+      "spellbook_count": 0,
+      "prepared_count": 0
+    },
+    "wizard": {
+      "label": "Mago",
+      "title": "Wizard",
+      "icon": "auto_fix_high",
+      "color": "#b69bff",
+      "tag": "CONOCIMIENTO ARCANO",
+      "role": "Magia y control",
+      "difficulty": "Más decisiones",
+      "description": "Convertí el conocimiento en poder. Prepará tus conjuros y encontrá soluciones inesperadas.",
+      "focus": "Inteligencia · Constitución",
+      "abilities": {
+        "fuerza": 8,
+        "destreza": 13,
+        "constitucion": 14,
+        "inteligencia": 15,
+        "sabiduria": 12,
+        "carisma": 10
+      },
+      "saves": [
+        "inteligencia",
+        "sabiduria"
+      ],
+      "skills": [
+        "Arcanos",
+        "Historia",
+        "Investigación",
+        "Medicina",
+        "Perspicacia",
+        "Religión"
+      ],
+      "skill_count": 2,
+      "default_skills": [
+        "Arcanos",
+        "Investigación"
+      ],
+      "features": [
+        "Lanzamiento de conjuros con Inteligencia.",
+        "Recuperación arcana: una vez al día, tras un descanso corto, recupera espacios con nivel combinado de hasta la mitad del nivel de mago, redondeado hacia arriba."
+      ],
+      "gear": {
+        "staff": {
+          "label": "Bastón y foco arcano",
+          "description": "Bastón, libro de conjuros y foco. Sin armadura.",
+          "ac": 10,
+          "add_dex": true,
+          "attacks": [
+            {
+              "nombre": "Bastón",
+              "dado": "1d6",
+              "atributo": "fuerza",
+              "tipo": "cuerpo a cuerpo"
+            }
+          ],
+          "items": [
+            "Bastón",
+            "Foco arcano",
+            "Libro de conjuros",
+            "Equipo de erudito"
+          ]
+        },
+        "dagger": {
+          "label": "Daga y componentes",
+          "description": "Daga ligera, libro y bolsa de componentes. Sin armadura.",
+          "ac": 10,
+          "add_dex": true,
+          "attacks": [
+            {
+              "nombre": "Daga",
+              "dado": "1d4",
+              "atributo": "destreza",
+              "tipo": "cuerpo a cuerpo"
+            }
+          ],
+          "items": [
+            "Daga",
+            "Bolsa de componentes",
+            "Libro de conjuros",
+            "Equipo de erudito"
+          ]
+        }
+      },
+      "casting": "inteligencia",
+      "cantrips": [
+        "Fire Bolt",
+        "Light",
+        "Mage Hand",
+        "Minor Illusion",
+        "Prestidigitation",
+        "Ray of Frost"
+      ],
+      "cantrip_count": 3,
+      "spells": [
+        "Burning Hands",
+        "Charm Person",
+        "Detect Magic",
+        "Mage Armor",
+        "Magic Missile",
+        "Shield",
+        "Sleep",
+        "Thunderwave"
+      ],
+      "spellbook_count": 6,
+      "prepared_count": 3
+    },
+    "rogue": {
+      "label": "Pícaro",
+      "title": "Rogue",
+      "icon": "visibility",
+      "color": "#72cba9",
+      "tag": "INGENIO EN LAS SOMBRAS",
+      "role": "Sigilo y precisión",
+      "difficulty": "Táctico",
+      "description": "Elegí el momento justo. Explorás en silencio, abrís cerraduras y aprovechás los puntos débiles.",
+      "focus": "Destreza · Inteligencia",
+      "abilities": {
+        "fuerza": 8,
+        "destreza": 15,
+        "constitucion": 14,
+        "inteligencia": 13,
+        "sabiduria": 12,
+        "carisma": 10
+      },
+      "saves": [
+        "destreza",
+        "inteligencia"
+      ],
+      "skills": [
+        "Acrobacias",
+        "Atletismo",
+        "Engaño",
+        "Interpretación",
+        "Intimidación",
+        "Investigación",
+        "Juego de manos",
+        "Percepción",
+        "Perspicacia",
+        "Persuasión",
+        "Sigilo"
+      ],
+      "skill_count": 4,
+      "default_skills": [
+        "Sigilo",
+        "Juego de manos",
+        "Percepción",
+        "Investigación"
+      ],
+      "features": [
+        "Pericia: duplicá la competencia en dos habilidades elegidas.",
+        "Ataque furtivo: 1d6 adicional una vez por turno si se cumplen sus condiciones; requiere arma sutil o a distancia.",
+        "Jerga de ladrones."
+      ],
+      "gear": {
+        "rapier": {
+          "label": "Estoque y arco corto",
+          "description": "Armadura de cuero, estoque, arco corto y herramientas de ladrón.",
+          "ac": 11,
+          "add_dex": true,
+          "attacks": [
+            {
+              "nombre": "Estoque",
+              "dado": "1d8",
+              "atributo": "destreza",
+              "tipo": "cuerpo a cuerpo"
+            },
+            {
+              "nombre": "Arco corto",
+              "dado": "1d6",
+              "atributo": "destreza",
+              "tipo": "a distancia"
+            }
+          ],
+          "items": [
+            "Armadura de cuero",
+            "Estoque",
+            "Arco corto",
+            "20 flechas",
+            "Dos dagas",
+            "Herramientas de ladrón",
+            "Equipo de ladrón"
+          ]
+        },
+        "shortsword": {
+          "label": "Espada corta y arco",
+          "description": "La misma movilidad con una espada corta como arma principal.",
+          "ac": 11,
+          "add_dex": true,
+          "attacks": [
+            {
+              "nombre": "Espada corta",
+              "dado": "1d6",
+              "atributo": "destreza",
+              "tipo": "cuerpo a cuerpo"
+            },
+            {
+              "nombre": "Arco corto",
+              "dado": "1d6",
+              "atributo": "destreza",
+              "tipo": "a distancia"
+            }
+          ],
+          "items": [
+            "Armadura de cuero",
+            "Espada corta",
+            "Arco corto",
+            "20 flechas",
+            "Dos dagas",
+            "Herramientas de ladrón",
+            "Equipo de ladrón"
+          ]
+        }
+      },
+      "cantrips": [],
+      "cantrip_count": 0,
+      "spells": [],
+      "spellbook_count": 0,
+      "prepared_count": 0
+    },
+    "cleric": {
+      "label": "Clérigo",
+      "title": "Cleric",
+      "icon": "light_mode",
+      "color": "#f0d489",
+      "tag": "LUZ EN LA OSCURIDAD",
+      "role": "Apoyo y protección",
+      "difficulty": "Versátil",
+      "description": "Protegé, saná y enfrentá la oscuridad. Tu fe sostiene al grupo y también puede golpear.",
+      "focus": "Sabiduría · Constitución",
+      "abilities": {
+        "fuerza": 13,
+        "destreza": 12,
+        "constitucion": 14,
+        "inteligencia": 8,
+        "sabiduria": 15,
+        "carisma": 10
+      },
+      "saves": [
+        "sabiduria",
+        "carisma"
+      ],
+      "skills": [
+        "Historia",
+        "Medicina",
+        "Perspicacia",
+        "Persuasión",
+        "Religión"
+      ],
+      "skill_count": 2,
+      "default_skills": [
+        "Medicina",
+        "Religión"
+      ],
+      "features": [
+        "Dominio de la Vida: competencia con armaduras pesadas.",
+        "Discípulo de la Vida: los hechizos de curación de nivel 1 o superior recuperan 2 + nivel del espacio HP adicionales.",
+        "Bendecir y Curar heridas siempre preparados por el dominio."
+      ],
+      "gear": {
+        "chain": {
+          "label": "Cota de malla y escudo",
+          "description": "Protección pesada del Dominio de la Vida, maza y símbolo sagrado.",
+          "ac": 18,
+          "attacks": [
+            {
+              "nombre": "Maza",
+              "dado": "1d6",
+              "atributo": "fuerza",
+              "tipo": "cuerpo a cuerpo"
+            }
+          ],
+          "items": [
+            "Cota de malla",
+            "Escudo",
+            "Maza",
+            "Símbolo sagrado",
+            "Ballesta ligera",
+            "20 virotes",
+            "Equipo de sacerdote"
+          ]
+        },
+        "scale": {
+          "label": "Escamas y escudo",
+          "description": "Armadura media, escudo, maza y símbolo sagrado.",
+          "ac": 14,
+          "add_dex": true,
+          "dex_cap": 2,
+          "shield": 2,
+          "attacks": [
+            {
+              "nombre": "Maza",
+              "dado": "1d6",
+              "atributo": "fuerza",
+              "tipo": "cuerpo a cuerpo"
+            }
+          ],
+          "items": [
+            "Armadura de escamas",
+            "Escudo",
+            "Maza",
+            "Símbolo sagrado",
+            "Ballesta ligera",
+            "20 virotes",
+            "Equipo de sacerdote"
+          ]
+        }
+      },
+      "casting": "sabiduria",
+      "subclass": "Dominio de la Vida",
+      "cantrips": [
+        "Guidance",
+        "Light",
+        "Resistance",
+        "Sacred Flame",
+        "Spare the Dying",
+        "Thaumaturgy"
+      ],
+      "cantrip_count": 3,
+      "spells": [
+        "Command",
+        "Detect Magic",
+        "Guiding Bolt",
+        "Healing Word",
+        "Sanctuary",
+        "Shield of Faith"
+      ],
+      "domain_spells": [
+        "Bless",
+        "Cure Wounds"
+      ],
+      "spellbook_count": 0,
+      "prepared_count": 3
+    }
+  },
+  "fragments": [
+    {
+      "need": "comparar_clases",
+      "text": "Guerrero: armas y resistencia; Pícaro: sigilo y precisión; Mago: magia basada en Inteligencia; Clérigo: magia basada en Sabiduría y protección. La selección inicial está acotada a estas cuatro clases.",
+      "id": "inicio_0",
+      "ruleset": "srd-2014",
+      "source": "https://media.wizards.com/2023/downloads/dnd/SRD_CC_v5.1.pdf"
+    },
+    {
+      "need": "crear_personaje",
+      "text": "Creación guiada de nivel 1: nombre, clase y opciones de equipo, habilidades y magia. Se asigna la matriz 15,14,13,12,10,8 sin bonos raciales. Esta aventura usa 100 HP máximos y 50 de oro iniciales como reglas propias; no recalcular HP con el dado de golpe. No se seleccionan raza ni trasfondo.",
+      "id": "inicio_1",
+      "ruleset": "srd-2014",
+      "source": "https://media.wizards.com/2023/downloads/dnd/SRD_CC_v5.1.pdf"
+    },
+    {
+      "need": "tiradas_basicas",
+      "text": "Modificador de atributo: floor((puntuación-10)/2). Competencia de nivel 1: +2. Una prueba usa d20 + modificador y competencia si corresponde. Pericia duplica solo el bonificador de competencia. El DM establece la dificultad; los dados y los cambios de HP se ejecutan con herramientas.",
+      "id": "inicio_2",
+      "ruleset": "srd-2014",
+      "source": "https://media.wizards.com/2023/downloads/dnd/SRD_CC_v5.1.pdf"
+    },
+    {
+      "need": "equipo_inicial",
+      "text": "SRD 2014: cota de malla CA 16 sin Destreza; cuero CA 11 + Destreza; escamas CA 14 + Destreza (máximo +2); escudo +2 CA; sin armadura CA 10 + Destreza. No aplicar maestrías de armas de 2024. El equipo activo de la ficha determina el ataque, el daño y la CA.",
+      "id": "inicio_3",
+      "ruleset": "srd-2014",
+      "source": "https://media.wizards.com/2023/downloads/dnd/SRD_CC_v5.1.pdf"
+    },
+    {
+      "need": "magia_inicial",
+      "text": "Un truco es un hechizo de nivel 0 y no consume espacios. A nivel 1, magos y clérigos tienen dos espacios de nivel 1. CD de hechizo = 8 + competencia + modificador de lanzamiento; ataque de hechizo = competencia + modificador. El nivel de hechizo no es el nivel de personaje. Consultar la descripción específica para saber si requiere ataque o salvación.",
+      "id": "inicio_4",
+      "ruleset": "srd-2014",
+      "source": "https://media.wizards.com/2023/downloads/dnd/SRD_CC_v5.1.pdf"
+    },
+    {
+      "need": "primer_combate",
+      "text": "Tirar iniciativa con d20 + Destreza. Un ataque impacta si d20 + bonificador alcanza CA; en ataques, 1 natural falla y 20 natural impacta y es crítico. Un crítico duplica los dados de daño, no los modificadores. Ventaja: dos d20 y el mayor; desventaja: el menor. Daño y ataque son tiradas separadas. Aplicar el daño con la herramienta correspondiente. Una acción adicional depende del rasgo que la habilita.",
+      "id": "inicio_5",
+      "ruleset": "srd-2014",
+      "source": "https://media.wizards.com/2023/downloads/dnd/SRD_CC_v5.1.pdf"
+    },
+    {
+      "id": "fighter_nivel1",
+      "need": "crear_personaje",
+      "class_id": "fighter",
+      "ruleset": "srd-2014",
+      "source": "https://media.wizards.com/2023/downloads/dnd/SRD_CC_v5.1.pdf",
+      "text": "Guerrero nivel 1: Estilo de combate: elegí Defensa o Duelo. Segundo aliento: una acción adicional recupera 1d10 + nivel de HP; un uso por descanso corto o largo."
+    },
+    {
+      "id": "wizard_nivel1",
+      "need": "crear_personaje",
+      "class_id": "wizard",
+      "ruleset": "srd-2014",
+      "source": "https://media.wizards.com/2023/downloads/dnd/SRD_CC_v5.1.pdf",
+      "text": "Mago nivel 1: Lanzamiento de conjuros con Inteligencia. Recuperación arcana: una vez al día, tras un descanso corto, recupera espacios con nivel combinado de hasta la mitad del nivel de mago, redondeado hacia arriba."
+    },
+    {
+      "id": "wizard_magia",
+      "need": "magia_inicial",
+      "class_id": "wizard",
+      "ruleset": "srd-2014",
+      "source": "https://media.wizards.com/2023/downloads/dnd/SRD_CC_v5.1.pdf",
+      "text": "Mago: atributo de lanzamiento inteligencia. Elegir 3 trucos y preparar 3 hechizos. Elegir seis hechizos de nivel 1 para el libro; preparar tres de ellos."
+    },
+    {
+      "id": "rogue_nivel1",
+      "need": "crear_personaje",
+      "class_id": "rogue",
+      "ruleset": "srd-2014",
+      "source": "https://media.wizards.com/2023/downloads/dnd/SRD_CC_v5.1.pdf",
+      "text": "Pícaro nivel 1: Pericia: duplicá la competencia en dos habilidades elegidas. Ataque furtivo: 1d6 adicional una vez por turno si se cumplen sus condiciones; requiere arma sutil o a distancia. Jerga de ladrones."
+    },
+    {
+      "id": "cleric_nivel1",
+      "need": "crear_personaje",
+      "class_id": "cleric",
+      "ruleset": "srd-2014",
+      "source": "https://media.wizards.com/2023/downloads/dnd/SRD_CC_v5.1.pdf",
+      "text": "Clérigo nivel 1: Dominio de la Vida: competencia con armaduras pesadas. Discípulo de la Vida: los hechizos de curación de nivel 1 o superior recuperan 2 + nivel del espacio HP adicionales. Bendecir y Curar heridas siempre preparados por el dominio."
+    },
+    {
+      "id": "cleric_magia",
+      "need": "magia_inicial",
+      "class_id": "cleric",
+      "ruleset": "srd-2014",
+      "source": "https://media.wizards.com/2023/downloads/dnd/SRD_CC_v5.1.pdf",
+      "text": "Clérigo: atributo de lanzamiento sabiduria. Elegir 3 trucos y preparar 3 hechizos. Dominio de la Vida: Bless y Cure Wounds siempre preparados además de los tres elegidos."
+    }
+  ]
+}

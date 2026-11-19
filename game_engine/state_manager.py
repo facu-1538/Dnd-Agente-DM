@@ -91,7 +91,7 @@ def _migrar(state: dict) -> dict:
     base = DEFAULT_STATE
     jugador = state.setdefault("jugador", copy.deepcopy(base["jugador"]))
     for clave, valor in base["jugador"].items():
-        jugador.setdefault(clave, valor)
+        jugador.setdefault(clave, copy.deepcopy(valor))
     state.setdefault("npcs", {})
     salas = state.setdefault("salas_descubiertas", ["sala_entrada"])
     state.setdefault("sala_actual", salas[-1] if salas else "sala_entrada")
@@ -434,6 +434,17 @@ class StateManager:
             self._registrar(estado, "personaje",
                             f"Nace {j['nombre']}, {j['raza']} {j['clase']} de nivel {j['nivel']}")
             return dict(j)
+
+    def confirm_character(self, choices: dict) -> dict:
+        """Confirma una ficha guiada validada. Una partida creada no se puede sobrescribir."""
+        from game_engine.character_creation import build_character
+        jugador = build_character(choices)
+        with self.transaccion() as estado:
+            if estado["jugador"].get("ficha_creada"):
+                raise ValueError("Esta partida ya tiene un personaje confirmado.")
+            estado["jugador"] = jugador
+            self._registrar(estado, "personaje", f"Nace {jugador['nombre']}, {jugador['clase']} de nivel 1")
+        return copy.deepcopy(jugador)
 
     def _dar_recompensa(self, estado: dict, oro: int, xp: int) -> dict:
         """Suma oro y XP al jugador (dentro de una transacción) y sube de nivel si corresponde."""

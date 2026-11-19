@@ -36,7 +36,9 @@ flowchart LR
     T --> R["query_rules_rag"] --> V[("FAISS<br/>SRD 5.1")]
     T --> D["execute_dice_roll"]
     T --> H["damage_player / heal_player"] --> S[("storage/partidas/&lt;id&gt;/")]
-    T --> E["set_character / manage_enemy"] --> S
+    UI --> C["Creación guiada / confirm_character"] --> S
+    T --> E["manage_enemy"] --> S
+    T --> F["get_starting_rules"] --> FC["Contenido inicial por filtros"]
     T --> P["switch_and_render_map"] --> MAP[("mapa PNG")]
     T --> G["generate_adventure_report"] --> PDF[("crónica PDF")]
     S -.-> G
@@ -64,13 +66,13 @@ flowchart LR
 | `execute_dice_roll` | **Propia** | Ejecuta tiradas reales (`1d20+5`, `2d6`, `4d6kh3`) y compara con CA/CD. | `dice_formula`, `reason`, `target_dc_or_ac` → JSON con dados, total y éxito |
 | `damage_player` / `heal_player` | **Propias** | Modifican la vida del jugador en el estado real (`storage/partidas/<id>/estado.json`). | `amount: int`, `source: str` → JSON con HP anterior y nuevo |
 | `manage_enemy` | **Propia** | Lleva los enemigos del combate: `spawn` (con HP y recompensa), `damage` y `remove`. Al derrotar a uno, el jugador cobra su oro y XP automáticamente y puede subir de nivel. | `action`, `name`, `hp`, `amount`, `xp`, `gold` → JSON con el estado del enemigo y la recompensa |
-| `set_character` | **Propia** | Guarda la ficha del personaje cuando el jugador termina de crearlo. | `name`, `race`, `char_class`, `level` → JSON con la ficha |
+| `get_starting_rules` | **Propia** (contenido local) | Selecciona reglas iniciales por necesidad y clase, sin embeddings ni top-k. | `need`, `class_name` → todos los fragmentos válidos y fuentes; comparar las cuatro clases incluye sus 14 chunks |
 | `switch_and_render_map` | **Propia** + externa (archivo) | Mueve al jugador: revela salas (validadas contra el layout), fija su ubicación y renderiza el mapa con niebla de guerra. | `revealed_nodes: list[str]`, `current_room: str` → texto con salas nuevas, ubicación y PNG en la carpeta de la partida |
 | `generate_adventure_report` | **Propia** + externa (genera un documento) | Genera la **crónica de la aventura en PDF** (ReportLab): portada, ficha, resumen, mapa con la ruta, balance de combate, cronología y reglas consultadas. Todos los datos salen del estado del juego; el modelo solo aporta el epílogo. | `summary: str` (epílogo de 3 a 6 frases) → JSON con la ruta del PDF, sus páginas y su tamaño |
 
 **Partidas guardadas:** cada partida tiene un id y una carpeta `storage/partidas/<id>/` con `estado.json` (ficha, vida, oro, XP, enemigos, sala y ruta), `mensajes.json` (el chat visible), `mapa.png` e `informes/` (PDFs). La memoria del agente (`storage/memoria.db`) usa ese mismo id, así que las tres cosas van juntas. En el sidebar, **Nueva partida** crea otra y la pestaña **Historial** permite abrir o borrar las guardadas; al recargar la página se retoma la última. Si había un `storage/game_state.json` de versiones anteriores, se copia como primera partida.
 
-**Estado del juego:** vive en `estado.json` de la partida activa y lo modifican solo las tools (ficha, vida, oro, XP, enemigos, sala actual y ruta, y un registro de eventos de la partida). Cada modificación es una **transacción atómica** bajo un lock: LangGraph puede ejecutar varias tools a la vez en un mismo turno y, sin esto, una pisaría los cambios de otra. En cada turno el agente recibe una línea `[ESTADO: ...]` con los datos reales, así no inventa ni usa valores viejos.
+**Estado del juego:** vive en `estado.json` de la partida activa y lo modifican el creador guiado al confirmar la ficha y las tools durante la aventura (vida, oro, XP, enemigos, sala actual, ruta y eventos). Cada modificación es una **transacción atómica** bajo un lock: LangGraph puede ejecutar varias tools a la vez en un mismo turno y, sin esto, una pisaría los cambios de otra. En cada turno el agente recibe una línea `[ESTADO: ...]` con los datos reales, así no inventa ni usa valores viejos.
 
 Todas manejan sus errores sin cortar el flujo (devuelven un mensaje/JSON de error que el agente puede leer).
 
@@ -174,7 +176,7 @@ Se abre en <http://localhost:8501>. El índice vectorial ya viene en el reposito
 | **Visibilidad de tools (streaming)** | Cada herramienta aparece en la línea de tiempo apenas se invoca, con sus argumentos; al terminar muestra el resumen del resultado. Al abrirla se ve el resultado completo. |
 | **Razonamiento** | Bloque "Razonamiento", diferenciado de la respuesta. Se muestra en vivo mientras el modelo piensa. |
 | **Pasos abiertos** | Mientras el agente responde, el razonamiento y cada herramienta se ven desplegados; **al terminar se cierran** y se abren con un clic. El interruptor **Dejar los pasos abiertos** (pestaña Partida, debajo del mapa) los deja abiertos. Cada paso muestra cuánto tardó y cada turno cierra con `N herramientas · X s`. |
-| **Estado coherente** | Creá tu personaje (`Soy Aldric, humano guerrero`) y mirá cómo la sidebar muestra la ficha. Tras un combate se actualizan la vida, el oro, la XP, la ubicación y los enemigos. |
+| **Estado coherente** | Elegí una tarjeta de clase, prepará sus opciones y confirmá con «Cruzar el umbral». La sidebar permite consultar la ficha completa. Tras un combate se actualizan la vida, el oro, la XP, la ubicación y los enemigos. |
 | **Tiradas de dados** | Cada tirada es una fila compacta con un dado que gira, el número y el veredicto (**ÉXITO** / **FALLO**; ¡CRÍTICO! o ¡PIFIA! con un 20 o un 1 natural). Cuando el jugador y un enemigo tiran uno tras otro (la tool `execute_dice_roll` recibe `roller`), se juntan en un **duelo**: tu dado a la izquierda, el del enemigo a la derecha y un cartel con quién ganó la ronda ("Perdiste la ronda: fallás y el Goblin te impacta"). |
 | **Self-query (filtros por metadatos)** | Preguntá `¿Qué hechizos de evocación de nivel 3 existen?` o `¿Qué muertos vivientes de CR 1 o menos puedo encontrar?`: al abrir el paso de la consulta se ven los filtros que el agente armó solo (`spell_level=3`, `school=evocation`, `monster_type=undead`, `max_cr=1`). También `Contame qué obtiene un mago al nivel 1` (documento de clases). |
 | **Memoria** | Después de una tirada preguntá `¿Cuánto salió en esa tirada?`: responde sin que se lo repitas. La memoria es persistente: recargá la página (F5) o reiniciá Streamlit y el agente sigue acordándose. |
@@ -182,6 +184,18 @@ Se abre en <http://localhost:8501>. El índice vectorial ya viene en el reposito
 | **Navegación del chat** | En el borde derecho aparece un riel con un punto por cada mensaje tuyo: al pasar el mouse muestra su mini título y al hacer clic salta a esa parte de la conversación. |
 | **RAG y citas** | Preguntá `¿Qué hace el hechizo Bola de Fuego?`: aparece la consulta de reglas (al abrir el paso se ve qué se buscó y qué fragmentos volvieron) y, debajo de la respuesta, el desplegable **Fuentes consultadas** con el documento de origen de cada dato, por ejemplo `spells.txt › Fireball`. |
 | **Producto tangible** | Escribí `Terminemos: genera la crónica de la aventura`. El agente llama a `generate_adventure_report` y aparece el botón **Descargar crónica (PDF)**. El mapa también se puede descargar desde el chat. Tocando el mapa de la barra lateral se abre en grande, centrado y sin scroll, con **zoom de rueda**, arrastre, doble clic y un botón de descarga. |
+
+## Inicio de una partida: creación guiada
+
+1. **Elegir:** tarjetas de Guerrero, Mago, Pícaro y Clérigo, con comparación de estilos.
+2. **Preparar:** nombre, equipo y habilidades; el Guerrero elige Defensa o Duelo, el Pícaro dos pericias, y los lanzadores eligen trucos y hechizos. El Mago elige seis hechizos de libro y prepara tres de ellos. El Clérigo usa Dominio de la Vida, con sus dos hechizos de dominio además de tres preparados.
+3. **Confirmar:** Python valida las elecciones, calcula la ficha y la guarda antes de empezar la aventura. No se crea por chat. Se puede completar la creación sin API key; conversar con el DM sí requiere Gemini.
+
+Los paquetes de equipo son selecciones acotadas y válidas del SRD 2014. Se usa la matriz estándar sin bonos raciales ni trasfondo y se mantienen las reglas propias de 100 HP y 50 de oro iniciales. `game_engine/character_creation.py` calcula los valores; la ficha se inyecta en cada turno como `[FICHA CONFIRMADA: ...]`.
+
+`rag/data/starting_rules.json` conserva perfiles y fragmentos fijos por necesidad: comparar clases, crear personaje, equipo inicial, magia inicial, tiradas básicas y primer combate. `rag/fixed_content.py` los selecciona por necesidad/clase y recupera todas las partes de las clases desde el corpus, sin FAISS, embeddings ni límite de cuatro. La UI usa esos mismos perfiles. Las clases completas conservan sus fuentes; el contenido preparado de inicio se identifica como una adaptación del SRD 5.1.
+
+**Fallback online:** si el RAG local falla, no tiene resultados o sus vecinos superan la distancia L2 cuadrada de 0.80, la tool consulta Open5e. Conserva nivel, escuela, tipo y CR, exige procedencia `wotc-srd`/`srd-2014` y devuelve hasta tres entradas. No modifica el índice local. Las coincidencias de título mantienen su prioridad. El umbral proviene del cambio upstream; no se recalibró con consultas Gemini en esta revisión.
 
 ## RAG: corpus e ingesta (reproducible)
 
@@ -197,10 +211,12 @@ Se abre en <http://localhost:8501>. El índice vectorial ya viene en el reposito
 **Metadatos y self-query:** la similitud vectorial sola no sabe filtrar ("hechizos de nivel 3 de evocación", "monstruos de CR menor a 1") ni encuentra lo que no está nombrado como lo busca el jugador. Por eso `query_rules_rag` recibe filtros opcionales que **el agente completa a partir de la pregunta** (self-query) y el retriever (`search_filtered` en `rag/retriever.py`) los aplica sobre los metadatos. Además, si la consulta nombra una entrada (`Fireball`, `Wizard`), esa entrada va primero. Decisiones de diseño:
 
 - Los metadatos se extraen de la **entrada completa** (`rag/metadata.py`) y se copian a todos sus fragmentos: el chunking de 2000 caracteres parte las entradas largas y los fragmentos de continuación no traen la línea `**Nivel:**` ni `**Tipo:**`. Como el contenido de los fragmentos no cambia, **no hizo falta recalcular los embeddings** (el script completa los metadatos de lo ya indexado sin gastar cuota).
-- Los filtros se aplican sobre **todo el índice** (`fetch_k` = tamaño del índice). FAISS filtra *después* de traer los más cercanos y, con el valor por defecto de LangChain (20), una categoría chica como `armor` quedaba con resultados incompletos o vacíos si otros documentos se parecían más a la consulta. Medido sobre el índice real con 10 consultas a categorías chicas (`armor`, `weapons`, `conditions`, `rules`): el código anterior devolvía 0 resultados en 7 de las 10 (y la tool caía en silencio a una búsqueda general), 1 en otra y 4 solo en las 2 restantes; ahora devuelve 4 en las 10.
+- Los filtros se aplican **antes de comparar vectores**: se seleccionan los IDs que cumplen todos los metadatos y se pasan a FAISS con `IDSelectorArray`. El `IndexFlat` del proyecto calcula distancias solo para esos IDs; no hace falta reconstruir el índice ni regenerar embeddings del corpus. Así se buscan los vecinos dentro del subconjunto válido, sin perder categorías pequeñas por recortar candidatos antes de filtrar. Si ningún documento cumple los filtros, tampoco se pide el embedding de la consulta. Sin filtros se mantiene la búsqueda general de LangChain.
 - Si los filtros no devuelven nada, la tool lo dice explícitamente en vez de caer en silencio a una búsqueda general.
 
-**Tamaño del contexto:** la tool devuelve como máximo 4 fragmentos de ≤2000 caracteres (~8000 caracteres), para no saturar el contexto del agente.
+**Tamaño del contexto:** la búsqueda vectorial devuelve hasta 4 fragmentos de ≤2000 caracteres. La selección exacta de clases y `get_starting_rules` no tienen ese límite. `category=classes` busca títulos/alias en el corpus local sin embeddings; sin un título identificado, selecciona las cuatro clases iniciales.
+
+**Verificación local del filtrado, fallback y creación guiada (sin clave ni llamadas a Gemini):** `python -m unittest discover -s tests -v`. Las pruebas usan FAISS real, embeddings locales de prueba y el índice incluido en el repositorio.
 
 **Citas de las fuentes:** cada fragmento que recibe el agente lleva un encabezado con su documento de origen (`[Fuente 1: monsters.txt › Goblin]`) y la tool cierra con la línea `FUENTES CONSULTADAS`. La interfaz toma esas fuentes de lo que devolvió la tool (no de lo que escribe el modelo) y las muestra bajo cada respuesta en un desplegable cerrado, **Fuentes consultadas (N)**, sin repetir. Así la narración no se interrumpe con paréntesis y la cita no depende de que el modelo respete un formato: el prompt (`CITAS_RAG` en `agent/prompt.py`) le pide, de hecho, no escribir fuentes en el texto. Como la búsqueda devuelve hasta 4 fragmentos, el desplegable lista los documentos recuperados, aunque el modelo use solo algunos.
 
@@ -224,7 +240,7 @@ Para regenerar el índice completo, borrá `storage/vector_db/` y ejecutá `pyth
 - **Metadatos y clases:** solo hechizos, monstruos y clases tienen metadatos filtrables; el resto se busca por similitud y categoría. El documento de clases es el del SRD 5.1: 12 clases con una subclase cada una. La coincidencia de título es una heurística simple (por ejemplo, un título de una sola palabra necesita 5 letras o más y una consulta corta, salvo que la búsqueda esté acotada a su categoría).
 - **Dungeon fijo:** el mapa tiene 8 salas definidas en `game_engine/map_renderer.py`; el agente solo decide cuáles revelar.
 - **Crónica en PDF:** el balance y la cronología se calculan sobre los últimos 300 sucesos del registro (la cronología del PDF muestra los últimos 150). El epílogo lo escribe el modelo y puede agregar color narrativo; los datos de la ficha, el mapa y las cifras salen del estado. Usa fuentes estándar de PDF, por lo que se omiten símbolos que no traen (flechas, emojis).
-- **Ficha simplificada:** se guardan nombre, raza, clase y nivel. Los atributos no se guardan (el DM asigna la matriz estándar al crear el personaje) y la vida máxima es siempre 100.
+- **Ficha inicial guiada:** se guardan atributos, modificadores, CA, competencia, habilidades, salvaciones, equipo, ataques y magia. Sin raza ni trasfondo, con 100 HP. Las partidas antiguas se conservan. Los espacios de hechizo se inicializan, pero las tools actuales no descuentan recursos de clase/magia ni recalculan toda la ficha al subir de nivel.
 - **Oro y XP:** solo se obtienen al derrotar enemigos; no hay botín en cofres.
 - **Bienvenida fija:** es un texto estático (no gasta una llamada al modelo) que se registra en la memoria del agente.
 - **Cuota gratuita:** los límites de Gemini pueden producir errores 429 o latencias altas (ver la nota de la sección de ejecución); los reintentos no ayudan si se agota la cuota diaria.
@@ -253,3 +269,7 @@ Para regenerar el índice completo, borrá `storage/vector_db/` y ejecutá `pyth
 ## Equipo
 
 Integrantes: _(completar)_
+
+## Atribución de los contenidos iniciales
+
+This work includes material taken from the System Reference Document 5.1 (SRD 5.1) by Wizards of the Coast LLC, available at https://dnd.wizards.com/resources/systems-reference-document. The SRD 5.1 is licensed under the Creative Commons Attribution 4.0 International License available at https://creativecommons.org/licenses/by/4.0/legalcode. Adaptación y selección inicial en español; 100 HP y ausencia de raza/trasfondo son reglas propias de esta aplicación.

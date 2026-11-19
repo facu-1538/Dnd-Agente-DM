@@ -33,7 +33,34 @@ def _json(datos: dict) -> str:
 # ---------------------------------------------------------------------------
 
 _CATEGORIAS_RAG = {"spells", "monsters", "conditions", "armor", "weapons", "rules", "classes"}
-_SIN_RESULTADO = ("Sin resultados", "No se encontró", "No hay base de conocimientos")
+_SIN_RESULTADO = ("Sin resultados", "No se encontró", "No hay base de conocimientos", "Error al realizar")
+
+
+@tool
+def get_starting_rules(need: Literal["comparar_clases", "crear_personaje", "equipo_inicial",
+                                    "magia_inicial", "tiradas_basicas", "primer_combate"],
+                       class_name: str = "") -> str:
+    """Obtiene reglas iniciales SRD 2014 por filtros exactos, sin embeddings ni límite de chunks.
+
+    Args:
+        need: Necesidad del jugador: comparar_clases, crear_personaje, equipo_inicial,
+              magia_inicial, tiradas_basicas o primer_combate.
+        class_name: Guerrero, Mago, Pícaro o Clérigo (también fighter, wizard, rogue, cleric).
+                    Vacío selecciona todas las clases iniciales; comparar_clases incluye sus 14 chunks.
+
+    Returns:
+        Todos los fragmentos que cumplen los filtros y FUENTES CONSULTADAS para la UI.
+        No escribas citas en la narración. La creación y confirmación se realizan en la interfaz.
+    """
+    from rag.fixed_content import starting_documents, format_documents
+    try:
+        result = format_documents(starting_documents(need, class_name))
+        fuentes = re.search(r"^FUENTES CONSULTADAS: (.+)$", result, flags=re.M)
+        _log("reglas", f"Guía inicial: {need} / {class_name or 'todas las clases'}"
+             + (f" → {fuentes.group(1)}" if fuentes else ""))
+        return result
+    except ValueError as e:
+        return _json({"error": str(e)})
 
 
 @tool
@@ -45,7 +72,8 @@ def query_rules_rag(query: str, category: str = "general", spell_level: int = -1
     Usa esta herramienta cuando el jugador pregunta sobre:
     - Hechizos: nombre, efecto, componentes, duración, nivel, escuela
     - Monstruos: estadísticas, CR, HP, AC, acciones, resistencias
-    - Clases y subclases: dado de golpe, salvaciones, rasgos por nivel (mago, guerrero, pícaro...)
+    - Clases: usa preferentemente get_starting_rules. category=classes usa selección exacta,
+      sin embeddings ni límite de cuatro fragmentos.
     - Reglas del juego, condiciones, armas y armaduras
 
     Si la pregunta nombra un dato estructurado, pásalo como filtro además de la consulta (así se
@@ -64,9 +92,9 @@ def query_rules_rag(query: str, category: str = "general", spell_level: int = -1
         max_cr: Solo monstruos. Desafío máximo (0.25 = CR 1/4, 0.5 = CR 1/2, 5 = CR 5). Con -1 no se filtra.
 
     Returns:
-        Fragmentos recuperados (como máximo 4), cada uno con su documento de origen ("archivo.txt › Título"),
-        y al final la línea FUENTES CONSULTADAS. Al usar esta información en la respuesta,
-        cita la fuente así: (Fuente: monsters.txt › Goblin).
+        Hasta 4 fragmentos locales (clases: todos los del título seleccionado). Si faltan datos,
+        hasta 3 entradas de Open5e SRD 2014 que cumplen los mismos filtros.
+        FUENTES CONSULTADAS permite a la interfaz mostrar las fuentes; no cites en la narración.
     """
     # Importar aquí para evitar imports circulares al cargar el módulo
     try:
@@ -74,29 +102,25 @@ def query_rules_rag(query: str, category: str = "general", spell_level: int = -1
     except ImportError as e:
         return f"⚠️ No se pudo importar el módulo RAG: {e}. Verifica que el módulo rag/ esté disponible."
 
-    retriever = get_retriever()
-
-    # Verificar que la base de conocimientos esté cargada
-    if not retriever._ensure_loaded():
-        return (
-            "⚠️ La base de conocimientos no está disponible. "
-            "Ejecuta 'python setup_rag.py' primero para ingesta y construcción del vector store."
-        )
-
-    # Self-query: el agente decide qué filtros aplicar; los valores "vacíos" (-1, "") significan sin filtro
     categoria = category if category in _CATEGORIAS_RAG else None
-    resultado = retriever.search_filtered(
-        query,
-        k=4,
-        category=categoria,
-        spell_level=spell_level if spell_level >= 0 else None,
-        school=school.strip() or None,
-        monster_type=monster_type.strip() or None,
-        max_cr=max_cr if max_cr >= 0 else None,
-    )
+    if categoria == "classes":
+        from rag.fixed_content import classes_from_query, format_documents
+        resultado = format_documents(classes_from_query(query))
+        fuentes = re.search(r"^FUENTES CONSULTADAS: (.+)$", resultado, flags=re.M)
+        _log("reglas", f"Consulta exacta de clases: «{query}»" + (f" → {fuentes.group(1)}" if fuentes else ""))
+        return resultado
+
+    retriever = get_retriever()
+    filtros = dict(category=categoria, spell_level=spell_level if spell_level >= 0 else None,
+                   school=school.strip() or None, monster_type=monster_type.strip() or None,
+                   max_cr=max_cr if max_cr >= 0 else None)
+    try:
+        resultado = retriever.search_filtered(query, k=4, **filtros)
+    except Exception as e:
+        resultado = f"Error al realizar la búsqueda local: {e}"
 
     if resultado.startswith(_SIN_RESULTADO):
-        desde_api = retriever.search_api(query, categoria)
+        desde_api = retriever.search_api(query, **filtros)
         if desde_api:
             resultado = desde_api
 
@@ -396,34 +420,6 @@ def heal_player(amount: int, source: str = "desconocido") -> str:
                       "nuevo_hp": r["nuevo_hp"], "hp_max": r["max_hp"]})
     except Exception as e:
         return _json({"error": f"No se pudo aplicar la curación: {e}"})
-
-
-# ---------------------------------------------------------------------------
-# TOOL 6: Ficha del personaje
-# ---------------------------------------------------------------------------
-
-@tool
-def set_character(name: str, race: str, char_class: str, level: int = 1) -> str:
-    """
-    Guarda la ficha del personaje cuando el jugador termina de crearlo.
-    Llámala UNA sola vez, al tener nombre, raza y clase. El panel lateral y el informe
-    final de la aventura usan estos datos.
-
-    Args:
-        name: Nombre del personaje
-        race: Raza (ej: "elfo", "enano")
-        char_class: Clase (ej: "mago", "guerrero")
-        level: Nivel inicial (1 por defecto)
-
-    Returns:
-        JSON con la ficha guardada
-    """
-    try:
-        from game_engine.state_manager import get_state_manager
-        j = get_state_manager().set_character(name, race, char_class, level)
-        return _json({"nombre": j["nombre"], "raza": j["raza"], "clase": j["clase"], "nivel": j["nivel"]})
-    except Exception as e:
-        return _json({"error": f"No se pudo guardar la ficha: {e}"})
 
 
 # ---------------------------------------------------------------------------
